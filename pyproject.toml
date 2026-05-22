@@ -13,6 +13,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "loguru>=0.7.0",
     "pyyaml>=6.0.0",
+    "sqlite-vec>=0.1.9",
+    "networkx>=3.6",
+    "python-louvain>=0.16",
 ]
 
 [project.optional-dependencies]

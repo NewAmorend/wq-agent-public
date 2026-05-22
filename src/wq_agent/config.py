@@ -30,6 +30,19 @@ class Settings(BaseSettings):
 
     DB_PATH: str = "./wq_agent.db"
 
+    WIKI_DIR: str = "./wiki"
+    WIKI_RETRIEVE_TOP_K: int = 5
+    WIKI_GREP_WEIGHT: int = 7
+    WIKI_VECTOR_WEIGHT: int = 3
+    WIKI_AUTO_RECORD: bool = True
+    WIKI_SUMMARY_CHARS: int = 200
+
+    EMBEDDING_PROVIDER: str = "none"
+    EMBEDDING_MODEL: str = "doubao-embedding-text-240715"
+    EMBEDDING_API_KEY: str = ""
+    EMBEDDING_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3/embeddings"
+    EMBEDDING_DIM: int = 2048
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

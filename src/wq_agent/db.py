@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import struct
 from datetime import datetime
 from typing import Any
 
 import aiosqlite
+from loguru import logger
 
 from .models import AlphaRecord, AlphaStatus, BacktestResult, GenerationStrategy, QualityGrade
 
@@ -41,6 +43,23 @@ CREATE TABLE IF NOT EXISTS backtest_results (
 CREATE INDEX IF NOT EXISTS idx_alphas_status ON alphas(status);
 CREATE INDEX IF NOT EXISTS idx_backtest_alpha_id ON backtest_results(alpha_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_fitness ON backtest_results(fitness);
+
+CREATE TABLE IF NOT EXISTS wiki_pages (
+    path TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    type TEXT NOT NULL,
+    tags TEXT,
+    sources TEXT,
+    content_hash TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wiki_embeddings_blob (
+    page_path TEXT PRIMARY KEY REFERENCES wiki_pages(path) ON DELETE CASCADE,
+    dim INTEGER NOT NULL,
+    embedding BLOB NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
 """
 
 
@@ -52,7 +71,24 @@ class Database:
     async def connect(self) -> None:
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
+        self.vec_extension_loaded = await self._try_load_sqlite_vec()
         await self._exec_script(_SCHEMA)
+
+    async def _try_load_sqlite_vec(self) -> bool:
+        assert self._conn is not None
+        try:
+            import sqlite_vec  # type: ignore
+        except ImportError:
+            return False
+        try:
+            await self._conn.enable_load_extension(True)
+            await self._conn.load_extension(sqlite_vec.loadable_path())
+            await self._conn.enable_load_extension(False)
+            logger.debug("Loaded sqlite-vec extension")
+            return True
+        except Exception as exc:
+            logger.debug(f"sqlite-vec not available: {exc}")
+            return False
 
     async def close(self) -> None:
         if self._conn:
@@ -219,3 +255,88 @@ class Database:
         row = await cursor.fetchone()
         stats["high_quality_count"] = row["cnt"]
         return stats
+
+    async def upsert_wiki_page(
+        self,
+        path: str,
+        title: str,
+        type_: str,
+        tags: list[str],
+        sources: list[str],
+        content_hash: str,
+    ) -> None:
+        assert self._conn is not None
+        await self._conn.execute(
+            """INSERT INTO wiki_pages (path, title, type, tags, sources, content_hash, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(path) DO UPDATE SET
+                   title=excluded.title,
+                   type=excluded.type,
+                   tags=excluded.tags,
+                   sources=excluded.sources,
+                   content_hash=excluded.content_hash,
+                   updated_at=excluded.updated_at""",
+            (
+                path,
+                title,
+                type_,
+                json.dumps(tags, ensure_ascii=False),
+                json.dumps(sources, ensure_ascii=False),
+                content_hash,
+                datetime.now().isoformat(),
+            ),
+        )
+        await self._conn.commit()
+
+    async def delete_wiki_pages(self, keep_paths: set[str]) -> int:
+        assert self._conn is not None
+        cursor = await self._conn.execute("SELECT path FROM wiki_pages")
+        rows = await cursor.fetchall()
+        to_drop = [r["path"] for r in rows if r["path"] not in keep_paths]
+        for path in to_drop:
+            await self._conn.execute("DELETE FROM wiki_pages WHERE path = ?", (path,))
+            await self._conn.execute(
+                "DELETE FROM wiki_embeddings_blob WHERE page_path = ?", (path,)
+            )
+        await self._conn.commit()
+        return len(to_drop)
+
+    async def get_wiki_hashes(self) -> dict[str, str]:
+        assert self._conn is not None
+        cursor = await self._conn.execute("SELECT path, content_hash FROM wiki_pages")
+        rows = await cursor.fetchall()
+        return {r["path"]: r["content_hash"] for r in rows}
+
+    async def upsert_wiki_embedding(self, path: str, embedding: list[float]) -> None:
+        assert self._conn is not None
+        blob = struct.pack(f"{len(embedding)}f", *embedding)
+        await self._conn.execute(
+            """INSERT INTO wiki_embeddings_blob (page_path, dim, embedding, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(page_path) DO UPDATE SET
+                   dim=excluded.dim,
+                   embedding=excluded.embedding,
+                   updated_at=excluded.updated_at""",
+            (path, len(embedding), blob, datetime.now().isoformat()),
+        )
+        await self._conn.commit()
+
+    async def load_wiki_embeddings(self) -> dict[str, list[float]]:
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "SELECT page_path, dim, embedding FROM wiki_embeddings_blob"
+        )
+        rows = await cursor.fetchall()
+        out: dict[str, list[float]] = {}
+        for r in rows:
+            dim = r["dim"]
+            out[r["page_path"]] = list(struct.unpack(f"{dim}f", r["embedding"]))
+        return out
+
+    async def wiki_counts(self) -> dict[str, int]:
+        assert self._conn is not None
+        c = await self._conn.execute("SELECT COUNT(*) AS n FROM wiki_pages")
+        pages = (await c.fetchone())["n"]
+        c = await self._conn.execute("SELECT COUNT(*) AS n FROM wiki_embeddings_blob")
+        embeds = (await c.fetchone())["n"]
+        return {"wiki_pages": pages, "wiki_embeddings": embeds}

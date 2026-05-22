@@ -73,24 +73,91 @@ wq-agent status
 
 ```
 src/wq_agent/
-├── cli.py              # Typer CLI 入口（generate / backtest / list / run / status）
+├── cli.py              # Typer CLI 入口（generate / backtest / list / run / status / wiki ...）
 ├── config.py           # pydantic-settings 配置加载
 ├── models.py           # AlphaRecord / BacktestResult / 枚举
-├── db.py               # aiosqlite 持久化层
+├── db.py               # aiosqlite 持久化层（含 wiki 表）
 ├── agent/
-│   └── orchestrator.py # 主流程编排
+│   └── orchestrator.py # 主流程编排（生成 → 回测 → 评估 → 自学习写 wiki）
 ├── generator/          # 三种 alpha 生成策略
-│   ├── llm.py
+│   ├── llm.py          # 注入 wiki 检索结果到 prompt
 │   ├── template.py
 │   └── factor.py
 ├── llm/                # LLM 适配（Kimi / DeepSeek）
 ├── wq/                 # WQ Brain 客户端 + 鉴权
-└── engine/
-    ├── backtest.py     # Simulation 提交与轮询
-    └── evaluator.py    # 多指标评级
+├── engine/
+│   ├── backtest.py     # Simulation 提交与轮询
+│   └── evaluator.py    # 多指标评级
+└── wiki/               # Quant Wiki：三通道混合检索 + 自动沉淀
+    ├── schema.py       # frontmatter / Page 数据类
+    ├── store.py        # 扫盘、wikilink 解析、断链检测
+    ├── tokenize.py     # FMM + 同义词扩展
+    ├── embeddings.py   # Volcengine / zhipu / NoOp
+    ├── index.py        # 全量/增量索引器
+    ├── auto_record.py  # backtest 后写 entries / lessons
+    └── retrieve/
+        ├── grep.py     # ripgrep + IDF/Coverage
+        ├── vector.py   # sqlite-vec 余弦
+        ├── graph.py    # NetworkX + Louvain + PageRank
+        └── hybrid.py   # priority + 加权 RRF + 图扩展
 templates/
 └── alpha_templates.yaml
+wiki/                   # 知识内容（人写 + 自动写）
+├── SCHEMA.md
+├── concepts/  operators/  fields/  entries/  lessons/
+└── dictionary/
+    ├── base.txt
+    └── synonyms.yaml
 ```
+
+## Quant Wiki（三通道混合检索）
+
+参考 [cnblogs.com/jtuki/p/19861920](https://www.cnblogs.com/jtuki/p/19861920) 的 AI Agent 结构化知识层架构，给 alpha 生成提供领域知识 + 历史教训。架构：
+
+- **存储**：`wiki/` 下的 markdown，YAML frontmatter + `[[wikilinks]]`，规范见 [wiki/SCHEMA.md](wiki/SCHEMA.md)
+- **词法通道**：FMM 分词（`wiki/dictionary/base.txt` + `synonyms.yaml`）+ ripgrep + IDF/Coverage 评分，纯 `0.6 * 加权 IDF 覆盖率 + 0.25 * 原始词条覆盖率`（上限 0.85）
+- **向量通道**：sqlite-vec 表 + Volcengine / zhipu Embedding，余弦排名
+- **图通道**：NetworkX 构建 wikilink + 共享标签 + 共享来源边，Louvain 社区检测 + PageRank，邻居扩展
+- **融合**：所有原始词条命中 → priority 置顶；其余走加权 RRF（`k=60, grep:vec=7:3`）+ 图扩展
+
+### 使用
+
+```bash
+# 索引（在 wiki 目录有变动后跑一次）
+wq-agent wiki index                # 全量
+wq-agent wiki index --incremental  # 仅 hash 变化的页重新嵌入
+
+# 调试检索
+wq-agent wiki search "动量 反转" -k 5
+
+# 看统计
+wq-agent wiki stats
+```
+
+`wq-agent generate / run` 启动时会自动构建索引并把 top-K 命中以 `## 知识库参考` section 注入 LLM prompt（目录缺失或 embedding 失败时静默降级）。
+
+### 自学习
+
+`WIKI_AUTO_RECORD=true` 时，每次 `wq-agent run` 的 backtest 完成后：
+
+- HIGH / MEDIUM 结果 → `wiki/entries/{date}-alpha-{id}.md`
+- REJECT 结果按"失败原因"聚类 → `wiki/lessons/{date}-batch-N.md`
+
+下次生成时，新写的 entries / lessons 就会被检索通道命中并喂给 LLM。
+
+### 选向量后端
+
+`EMBEDDING_PROVIDER` 支持 `volcengine` / `zhipu` / `none`：
+
+```bash
+EMBEDDING_PROVIDER=volcengine
+EMBEDDING_MODEL=doubao-embedding-text-240715
+EMBEDDING_API_KEY=          # 留空则复用 KIMI_API_KEY
+EMBEDDING_BASE_URL=https://ark.cn-beijing.volces.com/api/v3/embeddings
+EMBEDDING_DIM=2048
+```
+
+`none` 时关闭向量通道，只用 grep + 图。
 
 ## 开发
 

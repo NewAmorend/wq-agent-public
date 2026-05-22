@@ -18,6 +18,8 @@ app = typer.Typer(
     help="WorldQuant Alpha Generation & Backtesting Agent Harness",
     add_completion=False,
 )
+wiki_app = typer.Typer(name="wiki", help="Quant Wiki maintenance commands", add_completion=False)
+app.add_typer(wiki_app, name="wiki")
 console = Console()
 
 
@@ -224,6 +226,141 @@ def status(
             console.print(table)
         finally:
             await orch.close()
+
+    asyncio.run(_run())
+
+
+@wiki_app.command("stats")
+def wiki_stats(verbose: bool = typer.Option(False, "--verbose", "-v")):
+    """Show wiki page / edge / embedding counts."""
+    _setup_logging(verbose)
+    from .wiki.store import WikiStore
+    from .db import Database
+
+    async def _run():
+        settings = get_settings()
+        store = WikiStore(settings.WIKI_DIR)
+        db = Database(settings.DB_PATH)
+        await db.connect()
+        try:
+            counts = await db.wiki_counts()
+            pages, errors = store.load_pages() if store.exists() else ([], [])
+            table = Table(title="Quant Wiki Stats")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", justify="right")
+            table.add_row("wiki dir exists", str(store.exists()))
+            table.add_row("pages on disk", str(len(pages)))
+            table.add_row("parse errors", str(len(errors)))
+            table.add_row("pages in db", str(counts["wiki_pages"]))
+            table.add_row("embeddings in db", str(counts["wiki_embeddings"]))
+            table.add_row("sqlite-vec loaded", str(getattr(db, "vec_extension_loaded", False)))
+            console.print(table)
+        finally:
+            await db.close()
+
+    asyncio.run(_run())
+
+
+@wiki_app.command("index")
+def wiki_index(
+    incremental: bool = typer.Option(False, "--incremental", help="Skip pages whose hash didn't change"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """(Re)build wiki indexes: page metadata, embeddings, graph."""
+    _setup_logging(verbose)
+    from .wiki.store import WikiStore
+    from .wiki.index import WikiIndex
+    from .wiki.embeddings import make_embedding_provider
+    from .db import Database
+
+    async def _run():
+        settings = get_settings()
+        store = WikiStore(settings.WIKI_DIR)
+        if not store.exists():
+            console.print(f"[yellow]Wiki dir not found at {settings.WIKI_DIR}[/yellow]")
+            raise typer.Exit(0)
+        db = Database(settings.DB_PATH)
+        await db.connect()
+        embedder = make_embedding_provider(settings)
+        index = WikiIndex(
+            store=store,
+            db=db,
+            embedder=embedder,
+            grep_weight=settings.WIKI_GREP_WEIGHT,
+            vector_weight=settings.WIKI_VECTOR_WEIGHT,
+        )
+        try:
+            stats = await index.build(incremental=incremental)
+            table = Table(title="Index built")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", justify="right")
+            for k, v in stats.__dict__.items():
+                table.add_row(k, str(v))
+            console.print(table)
+        finally:
+            await embedder.close()
+            await db.close()
+
+    asyncio.run(_run())
+
+
+@wiki_app.command("search")
+def wiki_search(
+    query: str = typer.Argument(..., help="Query string"),
+    top_k: int = typer.Option(5, "--top-k", "-k"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Debug retrieval: run hybrid search and print hits."""
+    _setup_logging(verbose)
+    from .wiki.store import WikiStore
+    from .wiki.index import WikiIndex
+    from .wiki.embeddings import make_embedding_provider
+    from .db import Database
+
+    async def _run():
+        settings = get_settings()
+        store = WikiStore(settings.WIKI_DIR)
+        if not store.exists():
+            console.print(f"[yellow]Wiki dir not found at {settings.WIKI_DIR}[/yellow]")
+            raise typer.Exit(1)
+        db = Database(settings.DB_PATH)
+        await db.connect()
+        embedder = make_embedding_provider(settings)
+        index = WikiIndex(
+            store=store,
+            db=db,
+            embedder=embedder,
+            grep_weight=settings.WIKI_GREP_WEIGHT,
+            vector_weight=settings.WIKI_VECTOR_WEIGHT,
+        )
+        try:
+            await index.build(incremental=True)
+            retriever = index.retriever
+            if retriever is None:
+                console.print("[yellow]Retriever unavailable[/yellow]")
+                raise typer.Exit(1)
+            hits = await retriever.search(query, top_k=top_k)
+            if not hits:
+                console.print("[yellow]No hits[/yellow]")
+                return
+            table = Table(title=f'Results for "{query}"')
+            table.add_column("#", justify="right")
+            table.add_column("Score", justify="right", style="green")
+            table.add_column("Page", style="cyan")
+            table.add_column("Type")
+            table.add_column("Sources")
+            for i, h in enumerate(hits, 1):
+                table.add_row(
+                    str(i),
+                    f"{h.score:.3f}",
+                    h.page.title,
+                    h.page.type.value,
+                    ", ".join(h.sources),
+                )
+            console.print(table)
+        finally:
+            await embedder.close()
+            await db.close()
 
     asyncio.run(_run())
 

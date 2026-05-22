@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import re
 import random
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from loguru import logger
 
 from ..models import WQDataField, WQOperator
 from ..llm.base import BaseLLMProvider
 from .base import BaseAlphaGenerator
+
+if TYPE_CHECKING:
+    from ..wiki.retrieve.hybrid import HybridRetriever
 
 _ALPHA_PROMPT_TEMPLATE = """Generate {count} WorldQuant Brain alpha expressions.
 
@@ -183,6 +186,7 @@ reduce_sum(input) - 求和归约
 可用字段：{fields}
 可用运算符：{operators}
 
+{knowledge_section}
 {previous_results_section}
 
 **重要规则（必须严格遵守）：**
@@ -206,8 +210,17 @@ Generate {count} expressions:"""
 
 
 class LLMAlphaGenerator(BaseAlphaGenerator):
-    def __init__(self, llm: BaseLLMProvider):
+    def __init__(
+        self,
+        llm: BaseLLMProvider,
+        wiki_retriever: "HybridRetriever | None" = None,
+        wiki_top_k: int = 5,
+        wiki_summary_chars: int = 200,
+    ):
         self.llm = llm
+        self.wiki_retriever = wiki_retriever
+        self.wiki_top_k = wiki_top_k
+        self.wiki_summary_chars = wiki_summary_chars
 
     async def generate(
         self,
@@ -242,10 +255,13 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
             previous_section += "2. 绝对值表现很好fitness接近0.5，或者大于0.5 但是负数的因子，请在前面增加负号\n"
             previous_section += "3. 基于以上信息，生成新的改进后的Alpha表达式\n"
 
+        knowledge_section = await self._build_knowledge_section(data_fields, operators)
+
         prompt = _ALPHA_PROMPT_TEMPLATE.format(
             count=count,
             fields="\n".join(fields_str),
             operators="\n".join(operators_str),
+            knowledge_section=knowledge_section,
             previous_results_section=previous_section,
         )
 
@@ -254,6 +270,38 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
         cleaned = self._clean_expressions(raw_expressions)
         logger.info(f"LLM generated {len(cleaned)} valid expressions from {len(raw_expressions)} raw")
         return cleaned
+
+    async def _build_knowledge_section(
+        self,
+        data_fields: list[WQDataField],
+        operators: list[WQOperator],
+    ) -> str:
+        if not self.wiki_retriever:
+            return ""
+        sampled_fields = random.sample(data_fields, min(len(data_fields), 5))
+        sampled_ops = random.sample(operators, min(len(operators), 5))
+        query_parts = [
+            "高 fitness alpha 设计",
+            "动量 反转 波动率 流动性 质量",
+            *[f.id for f in sampled_fields],
+            *[op.name for op in sampled_ops],
+        ]
+        query = " ".join(query_parts)
+        try:
+            hits = await self.wiki_retriever.search(query, top_k=self.wiki_top_k)
+        except Exception as exc:
+            logger.warning(f"Wiki retrieval failed: {exc}")
+            return ""
+        if not hits:
+            return ""
+        lines = ["", "## 知识库参考", "以下是从内部 Quant Wiki 检索到的相关知识，请充分吸收并应用：", ""]
+        for h in hits:
+            summary = h.page.summary(self.wiki_summary_chars)
+            tags = ", ".join(h.page.tags[:6])
+            lines.append(f"- [[{h.page.slug}]] · {h.page.type.value} · 标签: {tags}")
+            lines.append(f"  - {summary}")
+        lines.append("")
+        return "\n".join(lines)
 
     def _parse_response(self, content: str) -> list[str]:
         if "antml:thinking>" in content or "</thinking>" in content:
