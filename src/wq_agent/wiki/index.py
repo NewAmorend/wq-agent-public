@@ -67,18 +67,23 @@ class WikiIndex:
         await self.db.delete_wiki_pages(keep)
         prior_hashes = await self.db.get_wiki_hashes() if incremental else {}
 
-        to_embed: list[Page] = []
-        for p in pages:
-            await self.db.upsert_wiki_page(
-                path=str(p.path),
-                title=p.title,
-                type_=p.type.value,
-                tags=p.tags,
-                sources=p.sources,
-                content_hash=p.content_hash,
-            )
-            if not incremental or prior_hashes.get(str(p.path)) != p.content_hash:
-                to_embed.append(p)
+        rows = [
+            {
+                "path": str(p.path),
+                "title": p.title,
+                "type_": p.type.value,
+                "tags": p.tags,
+                "sources": p.sources,
+                "content_hash": p.content_hash,
+            }
+            for p in pages
+        ]
+        await self.db.bulk_upsert_wiki_pages(rows)
+
+        to_embed: list[Page] = [
+            p for p in pages
+            if not incremental or prior_hashes.get(str(p.path)) != p.content_hash
+        ]
 
         embedded_now = await self._embed_pages(to_embed)
         embeddings = await self.db.load_wiki_embeddings()

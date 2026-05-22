@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -20,10 +20,19 @@ class GraphHit:
 
 
 class GraphChannel:
-    """wikilink + shared_tag(>=3) + shared_source edges → Louvain + PageRank."""
+    """wikilink + shared_tag + shared_source edges → Louvain + PageRank.
 
-    MIN_SHARED_TAG = 2  # >=2 共享标签建图边（用于社区检测）
-    EXPAND_SHARED_TAG = 3  # >=3 共享标签才做邻居扩展（更严格）
+    用倒排索引 + 频率过滤 + 硬上限构图，避免 O(n²) 在大 wiki 上 OOM。
+    """
+
+    MIN_SHARED_TAG = 2          # 至少共享 N 个标签才算"相似页"
+    EXPAND_SHARED_TAG = 3       # 邻居扩展的更严格阈值
+    MAX_TAG_DOC_FRAC = 0.30     # 出现在超过 30% 页里的标签 = 噪音，跳过
+    MAX_TAG_BUCKET = 40         # 单个标签桶超过 40 页就降级（只在桶内 sample）
+    MAX_SOURCE_BUCKET = 25
+    MAX_TOTAL_NON_WIKILINK_EDGES = 50_000  # 总图边硬上限，超过截断
+    MAX_NODES_FOR_LOUVAIN = 8_000
+    MAX_NODES_FOR_PAGERANK = 8_000
 
     def __init__(self, pages: list[Page]):
         self.pages = pages
@@ -32,20 +41,25 @@ class GraphChannel:
         self.graph = self._build_graph(pages)
         self.pagerank: dict[str, float] = {}
         self.communities: dict[str, int] = {}
-        if self.graph.number_of_nodes() >= 3:
+        n = self.graph.number_of_nodes()
+        if 3 <= n <= self.MAX_NODES_FOR_PAGERANK:
             try:
                 self.pagerank = nx.pagerank(self.graph, alpha=0.85, max_iter=30)
             except Exception as exc:
                 logger.debug(f"PageRank failed: {exc}")
-                self.pagerank = {n: 1.0 / max(self.graph.number_of_nodes(), 1) for n in self.graph.nodes}
-        if self.graph.number_of_edges() > 0:
+                self.pagerank = {nd: 1.0 / n for nd in self.graph.nodes}
+        elif n > self.MAX_NODES_FOR_PAGERANK:
+            logger.info(f"Skipping PageRank: {n} nodes > {self.MAX_NODES_FOR_PAGERANK}")
+        if self.graph.number_of_edges() > 0 and n <= self.MAX_NODES_FOR_LOUVAIN:
             try:
-                import community as community_louvain  # python-louvain
+                import community as community_louvain
                 undirected = self.graph.to_undirected()
                 self.communities = community_louvain.best_partition(undirected, random_state=42)
             except Exception as exc:
                 logger.debug(f"Louvain failed: {exc}")
                 self.communities = {}
+        elif n > self.MAX_NODES_FOR_LOUVAIN:
+            logger.info(f"Skipping Louvain: {n} nodes > {self.MAX_NODES_FOR_LOUVAIN}")
 
     def _resolve(self, name: str) -> Page | None:
         return self.pages_by_slug.get(name) or self.pages_by_title.get(name)
@@ -55,33 +69,78 @@ class GraphChannel:
         for p in pages:
             g.add_node(p.slug, type=p.type.value, title=p.title)
 
-        # wikilink edges
+        # wikilink edges — always cheap, never capped
+        wikilink_count = 0
         for p in pages:
             for link in p.wikilinks:
                 target = self._resolve(link)
                 if target and target.slug != p.slug:
                     g.add_edge(p.slug, target.slug, kind="wikilink")
+                    wikilink_count += 1
 
-        # shared_tag edges (undirected → add both directions)
-        for i, a in enumerate(pages):
-            ta = set(a.tags)
-            for b in pages[i + 1 :]:
-                shared = ta & set(b.tags)
-                if len(shared) >= self.MIN_SHARED_TAG:
-                    g.add_edge(a.slug, b.slug, kind="shared_tag", weight=len(shared))
-                    g.add_edge(b.slug, a.slug, kind="shared_tag", weight=len(shared))
+        n_pages = len(pages)
+        edge_budget = self.MAX_TOTAL_NON_WIKILINK_EDGES
 
-        # shared_source edges
-        for i, a in enumerate(pages):
-            sa = set(a.sources)
-            if not sa:
+        # --- shared_tag via inverted index ---
+        tag_to_slugs: dict[str, list[str]] = defaultdict(list)
+        for p in pages:
+            for t in p.tags:
+                tag_to_slugs[t].append(p.slug)
+
+        max_doc = max(int(n_pages * self.MAX_TAG_DOC_FRAC), 5)
+        pair_counts: Counter[tuple[str, str]] = Counter()
+        skipped_noise_tags = 0
+        for tag, slugs in tag_to_slugs.items():
+            if len(slugs) > max_doc:
+                skipped_noise_tags += 1
                 continue
-            for b in pages[i + 1 :]:
-                sb = set(b.sources)
-                if sa & sb:
-                    g.add_edge(a.slug, b.slug, kind="shared_source")
-                    g.add_edge(b.slug, a.slug, kind="shared_source")
+            bucket = slugs[: self.MAX_TAG_BUCKET]
+            for i, a in enumerate(bucket):
+                for b in bucket[i + 1 :]:
+                    key = (a, b) if a < b else (b, a)
+                    pair_counts[key] += 1
 
+        added_shared_tag = 0
+        for (a, b), count in pair_counts.most_common():
+            if count < self.MIN_SHARED_TAG:
+                break
+            if added_shared_tag >= edge_budget:
+                break
+            g.add_edge(a, b, kind="shared_tag", weight=count)
+            g.add_edge(b, a, kind="shared_tag", weight=count)
+            added_shared_tag += 2
+        edge_budget -= added_shared_tag
+
+        # --- shared_source via inverted index ---
+        source_to_slugs: dict[str, list[str]] = defaultdict(list)
+        for p in pages:
+            for s in p.sources:
+                source_to_slugs[s].append(p.slug)
+
+        added_shared_source = 0
+        for src, slugs in source_to_slugs.items():
+            if len(slugs) > max_doc:
+                continue  # too generic
+            bucket = slugs[: self.MAX_SOURCE_BUCKET]
+            for i, a in enumerate(bucket):
+                for b in bucket[i + 1 :]:
+                    if added_shared_source >= edge_budget:
+                        break
+                    if g.has_edge(a, b):
+                        continue
+                    g.add_edge(a, b, kind="shared_source")
+                    g.add_edge(b, a, kind="shared_source")
+                    added_shared_source += 2
+                if added_shared_source >= edge_budget:
+                    break
+            if added_shared_source >= edge_budget:
+                break
+
+        logger.info(
+            f"Graph built: {g.number_of_nodes()} nodes, {g.number_of_edges()} edges "
+            f"(wikilink={wikilink_count}, shared_tag={added_shared_tag}, "
+            f"shared_source={added_shared_source}, noise_tags_skipped={skipped_noise_tags})"
+        )
         return g
 
     def expand(self, seed_slugs: Iterable[str], k: int = 2) -> list[GraphHit]:

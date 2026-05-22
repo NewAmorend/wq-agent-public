@@ -288,16 +288,49 @@ class Database:
         )
         await self._conn.commit()
 
+    async def bulk_upsert_wiki_pages(self, rows: list[dict]) -> None:
+        """Single-transaction batch upsert. Each row needs path/title/type_/tags/sources/content_hash."""
+        assert self._conn is not None
+        if not rows:
+            return
+        now = datetime.now().isoformat()
+        payload = [
+            (
+                r["path"],
+                r["title"],
+                r["type_"],
+                json.dumps(r["tags"], ensure_ascii=False),
+                json.dumps(r["sources"], ensure_ascii=False),
+                r["content_hash"],
+                now,
+            )
+            for r in rows
+        ]
+        await self._conn.executemany(
+            """INSERT INTO wiki_pages (path, title, type, tags, sources, content_hash, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(path) DO UPDATE SET
+                   title=excluded.title,
+                   type=excluded.type,
+                   tags=excluded.tags,
+                   sources=excluded.sources,
+                   content_hash=excluded.content_hash,
+                   updated_at=excluded.updated_at""",
+            payload,
+        )
+        await self._conn.commit()
+
     async def delete_wiki_pages(self, keep_paths: set[str]) -> int:
         assert self._conn is not None
         cursor = await self._conn.execute("SELECT path FROM wiki_pages")
         rows = await cursor.fetchall()
-        to_drop = [r["path"] for r in rows if r["path"] not in keep_paths]
-        for path in to_drop:
-            await self._conn.execute("DELETE FROM wiki_pages WHERE path = ?", (path,))
-            await self._conn.execute(
-                "DELETE FROM wiki_embeddings_blob WHERE page_path = ?", (path,)
-            )
+        to_drop = [(r["path"],) for r in rows if r["path"] not in keep_paths]
+        if not to_drop:
+            return 0
+        await self._conn.executemany("DELETE FROM wiki_pages WHERE path = ?", to_drop)
+        await self._conn.executemany(
+            "DELETE FROM wiki_embeddings_blob WHERE page_path = ?", to_drop
+        )
         await self._conn.commit()
         return len(to_drop)
 

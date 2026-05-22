@@ -190,7 +190,7 @@ class WQDocImporter:
         body_lines += [
             "## 使用提示（人工补充）",
             "",
-            "- TODO：典型适用场景、常配合的算子（用 [[wikilink]]）、参数范围、踩坑",
+            "- TODO：典型适用场景、常配合的算子（用 `[[页名]]` 互链）、参数范围、踩坑",
             "",
         ]
         return front + "\n".join(body_lines)
@@ -239,7 +239,7 @@ class WQDocImporter:
         body_lines += [
             "## 用法提示（人工补充）",
             "",
-            "- TODO：典型组合方式、与之相关的 [[concepts]]",
+            "- TODO：典型组合方式、相关的 concept 页面",
             "",
         ]
         return front + "\n".join(body_lines)

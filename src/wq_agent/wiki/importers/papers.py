@@ -74,8 +74,7 @@ TODO：把论文的因子定义翻译成 FASTEXPR
 
 ## 相关
 
-- [[concepts]] 中相关的因子家族
-- [[operators]] 中会用到的算子
+- TODO：在 wiki/concepts/ 下补充相关因子家族页，用 `[[页名]]` 互链
 """
         return front + body
 

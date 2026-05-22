@@ -49,6 +49,35 @@ def test_grep_priority_when_all_originals_matched(wiki_root: Path):
     assert "动量" in hits[0].page.title or "动量" in hits[0].page.body
 
 
+def test_graph_handles_large_boilerplate_wiki_without_blowup(tmp_path: Path):
+    """Regression: 7000+ pages 几乎全部共享相同的 boilerplate tag/source 时，旧版 O(n²) 会 OOM。"""
+    import time
+    from datetime import date
+
+    from wq_agent.wiki.schema import Page, PageType
+
+    pages: list[Page] = []
+    for i in range(1500):
+        pages.append(Page(
+            path=Path(f"fields/field_{i}.md"),
+            title=f"field_{i}",
+            type=PageType.FIELD,
+            tags=["field", "fundamental6", "usa", "matrix"],  # 全员共享 → 应被过滤
+            sources=["worldquantbrain-api"],                  # 全员共享 → 应被过滤
+            created=date(2026, 5, 22),
+            body=f"placeholder body for field {i}",
+            wikilinks=[],
+        ))
+
+    start = time.monotonic()
+    g = GraphChannel(pages=pages)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5.0, f"Graph build too slow: {elapsed:.2f}s"
+    assert g.graph.number_of_edges() < 1000, \
+        f"Edges should be bounded by noise filter, got {g.graph.number_of_edges()}"
+
+
 def test_graph_expand_follows_wikilinks(wiki_root: Path):
     store = WikiStore(wiki_root)
     pages, _ = store.load_pages()
