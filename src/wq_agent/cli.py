@@ -365,5 +365,127 @@ def wiki_search(
     asyncio.run(_run())
 
 
+@wiki_app.command("import-wq")
+def wiki_import_wq(
+    region: Optional[str] = typer.Option(None, "--region", help="Override WQ_REGION"),
+    universe: Optional[str] = typer.Option(None, "--universe", help="Override WQ_UNIVERSE"),
+    delay: Optional[int] = typer.Option(None, "--delay", help="Override WQ_DELAY"),
+    limit_per_dataset: Optional[int] = typer.Option(None, "--limit-per-dataset", help="Cap fields fetched per dataset"),
+    skip_fields: bool = typer.Option(False, "--skip-fields", help="Only operators + datasets"),
+    reindex: bool = typer.Option(True, "--reindex/--no-reindex", help="Rebuild wiki index after import"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Import official WQ Brain docs (operators / datasets / fields) into wiki/."""
+    _setup_logging(verbose)
+    from .wq.client import WQClient
+    from .wiki.importers import WQDocImporter
+    from .wiki.store import WikiStore
+    from .wiki.index import WikiIndex
+    from .wiki.embeddings import make_embedding_provider
+    from .db import Database
+    from pathlib import Path
+
+    async def _run():
+        settings = get_settings()
+        client = WQClient(settings)
+        await client.connect()
+        try:
+            importer = WQDocImporter(Path(settings.WIKI_DIR), client)
+            stats = await importer.import_all(
+                region=region,
+                universe=universe,
+                delay=delay,
+                limit_per_dataset=limit_per_dataset,
+                include_fields=not skip_fields,
+            )
+            table = Table(title="WQ docs imported")
+            table.add_column("Kind", style="cyan")
+            table.add_column("Pages written", justify="right")
+            for k, v in stats.__dict__.items():
+                table.add_row(k, str(v))
+            console.print(table)
+        finally:
+            await client.close()
+
+        if reindex:
+            store = WikiStore(settings.WIKI_DIR)
+            db = Database(settings.DB_PATH)
+            await db.connect()
+            embedder = make_embedding_provider(settings)
+            idx = WikiIndex(store=store, db=db, embedder=embedder,
+                             grep_weight=settings.WIKI_GREP_WEIGHT,
+                             vector_weight=settings.WIKI_VECTOR_WEIGHT)
+            try:
+                istats = await idx.build(incremental=True)
+                console.print(f"[dim]Reindexed: {istats.pages} pages, {istats.embeddings} embeddings[/dim]")
+            finally:
+                await embedder.close()
+                await db.close()
+
+    asyncio.run(_run())
+
+
+@wiki_app.command("import-paper")
+def wiki_import_paper(
+    url: Optional[str] = typer.Option(None, "--url", help="arxiv.org/abs/<id> or papers.ssrn.com/...?abstract_id=<id>"),
+    manual: bool = typer.Option(False, "--manual", help="Provide all fields by flag instead of fetching"),
+    title: Optional[str] = typer.Option(None, "--title"),
+    authors: Optional[str] = typer.Option(None, "--authors", help="Comma-separated"),
+    year: Optional[int] = typer.Option(None, "--year"),
+    abstract: Optional[str] = typer.Option(None, "--abstract"),
+    tags: Optional[str] = typer.Option(None, "--tags", help="Comma-separated extra tags"),
+    reindex: bool = typer.Option(False, "--reindex", help="Rebuild wiki index after writing"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Import a research paper into wiki/papers/ (arxiv / SSRN auto-fetch, or --manual)."""
+    _setup_logging(verbose)
+    from .wiki.importers import PaperImporter
+    from .wiki.store import WikiStore
+    from .wiki.index import WikiIndex
+    from .wiki.embeddings import make_embedding_provider
+    from .db import Database
+    from pathlib import Path
+
+    tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+
+    async def _run():
+        settings = get_settings()
+        importer = PaperImporter(Path(settings.WIKI_DIR))
+        if manual:
+            if not title:
+                console.print("[red]--manual requires --title (and optionally --authors / --year / --url / --abstract)[/red]")
+                raise typer.Exit(1)
+            path = importer.import_manual(
+                title=title,
+                authors=[a.strip() for a in (authors or "").split(",") if a.strip()],
+                year=year,
+                url=url or "",
+                abstract=abstract or "",
+                tags=tag_list,
+            )
+        else:
+            if not url:
+                console.print("[red]Provide --url or use --manual[/red]")
+                raise typer.Exit(1)
+            path = await importer.import_url(url, tags=tag_list)
+        console.print(f"[green]Wrote {path}[/green]")
+
+        if reindex:
+            store = WikiStore(settings.WIKI_DIR)
+            db = Database(settings.DB_PATH)
+            await db.connect()
+            embedder = make_embedding_provider(settings)
+            idx = WikiIndex(store=store, db=db, embedder=embedder,
+                             grep_weight=settings.WIKI_GREP_WEIGHT,
+                             vector_weight=settings.WIKI_VECTOR_WEIGHT)
+            try:
+                await idx.build(incremental=True)
+            finally:
+                await embedder.close()
+                await db.close()
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     app()

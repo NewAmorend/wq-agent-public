@@ -136,6 +136,44 @@ wq-agent wiki stats
 
 `wq-agent generate / run` 启动时会自动构建索引并把 top-K 命中以 `## 知识库参考` section 注入 LLM prompt（目录缺失或 embedding 失败时静默降级）。
 
+### 导入官方文档与论文
+
+WQ Brain 平台的 `/learn/documentation` 是 SPA + 需要登录态，社区论坛走 Cloudflare 也拿不到。所以走两条路：
+
+**1. 用项目的 WQ Brain 鉴权 API 拉官方元数据**（这是 platform UI 上"Operators / Datasets / Datafields"页面背后的数据源）：
+
+```bash
+# 拉所有 operator + dataset + field（当前 region/universe/delay），渲染成 wiki/operators/ wiki/datasets/ wiki/fields/
+wq-agent wiki import-wq
+
+# 覆盖 region / 限制字段数
+wq-agent wiki import-wq --region CHN --universe TOP2000 --limit-per-dataset 100
+
+# 只拉 operators + datasets，跳过几千条 fields
+wq-agent wiki import-wq --skip-fields
+```
+
+importer 写入的页都带 `<!-- managed by wq-agent wiki import-wq -->` 标记，**重跑只覆盖标记还在的页**，你手改过的不动。
+
+**2. 导入研究论文**：
+
+```bash
+# arxiv（用 export API，无需登录）
+wq-agent wiki import-paper --url https://arxiv.org/abs/2401.12345 --tags momentum
+
+# SSRN（抓 abstract 页 meta）
+wq-agent wiki import-paper --url "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=987654"
+
+# 手动模式（WQ 社区 / Cloudflare 后面的论文）
+wq-agent wiki import-paper --manual \
+    --title "Returns to Buying Winners" \
+    --authors "Jegadeesh,Titman" --year 1993 \
+    --url https://example.com/paper.pdf \
+    --abstract "We document momentum..."
+```
+
+`wiki/papers/` 已预置 21 篇经典量化论文种子（Jegadeesh-Titman 92、Fama-French 93/15、Carhart 97、Asness-Moskowitz-Pedersen 13、Frazzini-Pedersen BAB、Hou-Xue-Zhang q-factor、Stambaugh-Yuan、Novy-Marx GP/A、Amihud、Pastor-Stambaugh、Ang-Hodrick-Xing-Zhang、Harvey-Liu-Zhu、Lopez de Prado HRP 等），含摘要 + key takeaway + WQ Brain 因子实现示例。
+
 ### 自学习
 
 `WIKI_AUTO_RECORD=true` 时，每次 `wq-agent run` 的 backtest 完成后：

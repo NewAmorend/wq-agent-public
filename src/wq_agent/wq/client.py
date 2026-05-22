@@ -266,6 +266,83 @@ class WQClient:
         logger.warning(f"Failed to get alpha details for {alpha_id}: {resp.status_code}")
         return {}
 
+    async def get_all_datasets(
+        self,
+        region: str | None = None,
+        universe: str | None = None,
+        delay: int | None = None,
+        instrument_type: str = "EQUITY",
+    ) -> list[dict[str, Any]]:
+        region = region or self.settings.WQ_REGION
+        universe = universe or self.settings.WQ_UNIVERSE
+        delay = delay if delay is not None else self.settings.WQ_DELAY
+        out: list[dict[str, Any]] = []
+        offset = 0
+        page_size = 50
+        while True:
+            resp = await self._request(
+                "get",
+                "/data-sets",
+                params={
+                    "delay": delay,
+                    "instrumentType": instrument_type,
+                    "region": region,
+                    "universe": universe,
+                    "limit": page_size,
+                    "offset": offset,
+                },
+            )
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            results = data.get("results", [])
+            out.extend(results)
+            if len(results) < page_size:
+                break
+            offset += page_size
+            if offset > 2000:
+                break
+        return out
+
+    async def get_all_data_fields_paged(
+        self,
+        dataset_id: str,
+        region: str | None = None,
+        universe: str | None = None,
+        delay: int | None = None,
+        instrument_type: str = "EQUITY",
+        page_size: int = 50,
+        max_pages: int = 100,
+    ) -> list[dict[str, Any]]:
+        region = region or self.settings.WQ_REGION
+        universe = universe or self.settings.WQ_UNIVERSE
+        delay = delay if delay is not None else self.settings.WQ_DELAY
+        out: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(max_pages):
+            resp = await self._request(
+                "get",
+                "/data-fields",
+                params={
+                    "delay": delay,
+                    "instrumentType": instrument_type,
+                    "region": region,
+                    "universe": universe,
+                    "dataset.id": dataset_id,
+                    "limit": page_size,
+                    "offset": offset,
+                },
+            )
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            results = data.get("results", [])
+            out.extend(results)
+            if len(results) < page_size:
+                break
+            offset += page_size
+        return out
+
     async def get_submitted_alphas(self, limit: int = 100) -> list[dict[str, Any]]:
         resp = await self._request(
             "get",
