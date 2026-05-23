@@ -293,7 +293,12 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
             logger.warning(f"Wiki retrieval failed: {exc}")
             return ""
         if not hits:
+            logger.info("Wiki retrieval: 0 hits, prompt unchanged")
             return ""
+        hit_summary = " | ".join(
+            f"{h.page.title[:30]}({h.score:.2f},{'+'.join(h.sources)})" for h in hits
+        )
+        logger.info(f"Wiki injected {len(hits)} pages: {hit_summary}")
         lines = ["", "## 知识库参考", "以下是从内部 Quant Wiki 检索到的相关知识，请充分吸收并应用：", ""]
         for h in hits:
             summary = h.page.summary(self.wiki_summary_chars)
