@@ -23,10 +23,14 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1/chat/completions"
     DEEPSEEK_MODEL: str = "deepseek-chat"
 
-    MIN_FITNESS: float = 0.5
-    MIN_SHARPE: float = 1.0
-    MAX_TURNOVER: float = 0.7
-    MIN_RETURNS: float = 0.05
+    # WQ Brain 官方提交阈值（USA TOP3000 delay=1，截至 2026-05）。
+    # 评估器优先使用 WQ 自带的 checks 列表；下面这组只在 checks 缺失时作为 fallback。
+    MIN_FITNESS: float = 1.0
+    MIN_SHARPE: float = 1.25
+    MIN_SUB_UNIVERSE_SHARPE: float = 0.67
+    MIN_TURNOVER: float = 0.01
+    MAX_TURNOVER: float = 0.70
+    MIN_RETURNS: float = 0.05  # WQ 不卡，保留作为可选偏好
 
     DB_PATH: str = "./wq_agent.db"
 

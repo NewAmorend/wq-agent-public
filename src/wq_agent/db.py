@@ -229,7 +229,7 @@ class Database:
             created_at=datetime.fromisoformat(r["created_at"]),
         )
 
-    async def list_high_quality_alphas(self, min_fitness: float = 0.5) -> list[dict[str, Any]]:
+    async def list_high_quality_alphas(self, min_fitness: float = 1.0) -> list[dict[str, Any]]:
         assert self._conn is not None
         cursor = await self._conn.execute(
             """SELECT a.*, b.sharpe, b.turnover, b.fitness, b.returns, b.drawdown, b.grade, b.wq_alpha_id
@@ -251,7 +251,7 @@ class Database:
             )
             row = await cursor.fetchone()
             stats[status.value] = row["cnt"]
-        cursor = await self._conn.execute("SELECT COUNT(*) as cnt FROM backtest_results WHERE fitness >= 0.5")
+        cursor = await self._conn.execute("SELECT COUNT(*) as cnt FROM backtest_results WHERE fitness >= 1.0")
         row = await cursor.fetchone()
         stats["high_quality_count"] = row["cnt"]
         return stats
