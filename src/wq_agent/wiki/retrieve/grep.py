@@ -2,11 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-import shutil
-import subprocess
 from dataclasses import dataclass
-
-from loguru import logger
 
 from ..schema import Page
 from ..tokenize import Tokenizer
@@ -21,7 +17,12 @@ class GrepHit:
 
 
 class GrepChannel:
-    """ripgrep + IDF + Coverage scoring (no BM25)."""
+    """In-memory IDF + Coverage scoring (no BM25).
+
+    旧版每个 (token, page) 起一次 ripgrep 子进程，7700 页时阻塞十几分钟。
+    现在 pages.body 本来就在内存里，全部预先 lowercase 一次，per-token 走 str.count
+    避免 77K 次 fork。
+    """
 
     SCORE_CAP = 0.85
 
@@ -34,16 +35,20 @@ class GrepChannel:
         self.pages = pages
         self.tokenizer = tokenizer
         self.n_pages = max(len(pages), 1)
-        self._rg = shutil.which("rg")
+        # 预先 lowercase 一份大文本，搜的时候只做 str.count
+        self._haystack: list[tuple[Page, str]] = [
+            (p, (p.title + "\n" + p.body).lower()) for p in pages
+        ]
         self.df = df if df is not None else self._build_df(pages)
 
     @staticmethod
     def _build_df(pages: list[Page]) -> dict[str, int]:
         df: dict[str, int] = {}
+        token_re = re.compile(r"[a-z0-9_]+|[一-鿿]+")
         for p in pages:
             seen: set[str] = set()
             text = (p.title + "\n" + p.body).lower()
-            for word in re.findall(r"[a-z0-9_]+|[一-鿿]+", text):
+            for word in token_re.findall(text):
                 if word in seen:
                     continue
                 seen.add(word)
@@ -57,32 +62,6 @@ class GrepChannel:
             return math.log(self.n_pages + 1)
         return math.log(self.n_pages / d)
 
-    def _count_in_page(self, page: Page, token: str) -> int:
-        haystack = (page.title + "\n" + page.body).lower()
-        needle = token.lower()
-        if not needle:
-            return 0
-        if self._rg:
-            try:
-                proc = subprocess.run(
-                    [self._rg, "--count-matches", "-F", "-i", "--", needle, str(page.path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if proc.returncode in (0, 1):
-                    out = proc.stdout.strip()
-                    if not out:
-                        return 0
-                    parts = out.splitlines()[-1].split(":")
-                    try:
-                        return int(parts[-1])
-                    except ValueError:
-                        return 0
-            except Exception as exc:
-                logger.debug(f"rg failed for {page.path}: {exc}; falling back to python")
-        return haystack.count(needle)
-
     def search(self, query: str, top_k: int = 10) -> list[GrepHit]:
         tokens = self.tokenizer.tokenize(query)
         if not tokens:
@@ -91,20 +70,27 @@ class GrepChannel:
         if not weighted:
             return []
 
-        denom = sum(self.idf(t) * w for t, w in weighted) or 1.0
-        original_count = len(originals) or 1
+        # 预先 lowercase 全部 query tokens；过滤空 token
+        weighted_lc: list[tuple[str, float]] = [
+            (t.lower(), w) for t, w in weighted if t
+        ]
+        originals_lc = {t.lower() for t in originals if t}
+
+        denom = sum(self.idf(t) * w for t, w in weighted_lc) or 1.0
+        original_count = len(originals_lc) or 1
+        idf_cache = {t: self.idf(t) for t, _ in weighted_lc}
 
         hits: list[GrepHit] = []
-        for page in self.pages:
+        for page, haystack in self._haystack:
             matched_weighted = 0.0
             matched_originals: set[str] = set()
-            for tok, weight in weighted:
-                cnt = self._count_in_page(page, tok)
-                if cnt > 0:
-                    matched_weighted += self.idf(tok) * weight
-                    if tok in originals:
+            for tok, weight in weighted_lc:
+                if tok and tok in haystack:
+                    matched_weighted += idf_cache[tok] * weight
+                    if tok in originals_lc:
                         matched_originals.add(tok)
-            if matched_weighted <= 0:
+            # 命中 0 个 token → 跳过；命中但 IDF=0（query 全是高频词）→ 仍按 coverage 计分
+            if not matched_originals:
                 continue
             coverage = len(matched_originals) / original_count
             score = 0.6 * (matched_weighted / denom) + 0.25 * coverage

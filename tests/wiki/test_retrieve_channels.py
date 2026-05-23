@@ -49,6 +49,35 @@ def test_grep_priority_when_all_originals_matched(wiki_root: Path):
     assert "动量" in hits[0].page.title or "动量" in hits[0].page.body
 
 
+def test_grep_search_is_fast_on_large_wiki(tmp_path: Path):
+    """Regression: 旧版 per-page subprocess ripgrep 在 7700 页上要 13 分钟。
+    现在纯内存 str.count，1500 页 + 10 token query 应在 1 秒内完成。"""
+    import time
+    from datetime import date
+
+    from wq_agent.wiki.schema import Page, PageType
+
+    pages: list[Page] = []
+    for i in range(1500):
+        pages.append(Page(
+            path=Path(f"fields/f_{i}.md"),
+            title=f"field_{i}",
+            type=PageType.FIELD,
+            tags=["field", "fundamental"],
+            created=date(2026, 5, 22),
+            body=f"description of field {i} mentioning momentum reversal volatility liquidity quality",
+            wikilinks=[],
+        ))
+    tk = _tokenizer(tmp_path) if (tmp_path / "dictionary/base.txt").exists() else Tokenizer.from_paths()
+
+    g = GrepChannel(pages=pages, tokenizer=tk)
+    start = time.monotonic()
+    hits = g.search("momentum reversal volatility liquidity quality field fundamental", top_k=5)
+    elapsed = time.monotonic() - start
+    assert elapsed < 1.0, f"Grep too slow: {elapsed:.2f}s"
+    assert len(hits) == 5
+
+
 def test_graph_handles_large_boilerplate_wiki_without_blowup(tmp_path: Path):
     """Regression: 7000+ pages 几乎全部共享相同的 boilerplate tag/source 时，旧版 O(n²) 会 OOM。"""
     import time
