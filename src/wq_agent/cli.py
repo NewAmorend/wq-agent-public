@@ -370,12 +370,12 @@ def wiki_import_wq(
     region: Optional[str] = typer.Option(None, "--region", help="Override WQ_REGION"),
     universe: Optional[str] = typer.Option(None, "--universe", help="Override WQ_UNIVERSE"),
     delay: Optional[int] = typer.Option(None, "--delay", help="Override WQ_DELAY"),
-    limit_per_dataset: Optional[int] = typer.Option(None, "--limit-per-dataset", help="Cap fields fetched per dataset"),
-    skip_fields: bool = typer.Option(False, "--skip-fields", help="Only operators + datasets"),
+    limit_per_dataset: Optional[int] = typer.Option(None, "--limit-per-dataset", help="Cap fields per dataset (only matters with --with-fields)"),
+    with_fields: bool = typer.Option(False, "--with-fields", help="Also write 7000+ per-field pages (usually unneeded; metadata is already inlined into dataset pages + dictionary)"),
     reindex: bool = typer.Option(True, "--reindex/--no-reindex", help="Rebuild wiki index after import"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
-    """Import official WQ Brain docs (operators / datasets / fields) into wiki/."""
+    """Import official WQ Brain docs (operators / datasets, optionally per-field pages) into wiki/."""
     _setup_logging(verbose)
     from .wq.client import WQClient
     from .wiki.importers import WQDocImporter
@@ -396,7 +396,7 @@ def wiki_import_wq(
                 universe=universe,
                 delay=delay,
                 limit_per_dataset=limit_per_dataset,
-                include_fields=not skip_fields,
+                include_fields=with_fields,
             )
             table = Table(title="WQ docs imported")
             table.add_column("Kind", style="cyan")

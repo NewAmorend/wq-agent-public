@@ -143,7 +143,7 @@ async def test_wq_importer_handles_nested_dict_fields(tmp_path: Path):
         },
     ])
     importer = WQDocImporter(wiki_root=tmp_path, client=client)
-    stats = await importer.import_all(region="USA", universe="TOP3000", delay=1)
+    stats = await importer.import_all(region="USA", universe="TOP3000", delay=1, include_fields=True)
     assert stats.datasets == 1
     assert stats.fields == 1
 
@@ -151,10 +151,38 @@ async def test_wq_importer_handles_nested_dict_fields(tmp_path: Path):
     assert "fundamental" in ds_page.tags
     assert "usa" in ds_page.tags
     assert "Fundamental 6" in ds_page.body
+    # 字段清单已内嵌进 dataset 页
+    assert "fnd6_test_field" in ds_page.body
+    assert "字段清单" in ds_page.body
 
     field_page = parse_page(tmp_path / "fields" / "fnd6_test_field.md")
     assert "fundamental6" in field_page.tags
     assert "matrix" in field_page.tags
+
+
+@pytest.mark.asyncio
+async def test_wq_importer_default_skips_per_field_pages_but_writes_dict(tmp_path: Path):
+    """include_fields=False（默认）：字段只内嵌到 dataset 页 + 写到 dictionary，不生成 7000 个 md。"""
+    client = AsyncMock()
+    client.get_operators = AsyncMock(return_value=[])
+    client.get_all_datasets = AsyncMock(return_value=[
+        {"id": "pv1", "name": "Price Volume", "category": "pv", "delay": 1, "region": "USA"},
+    ])
+    client.get_all_data_fields_paged = AsyncMock(return_value=[
+        {"id": "close", "type": "MATRIX", "dataset": {"id": "pv1"}, "description": "Closing price"},
+        {"id": "volume", "type": "MATRIX", "dataset": {"id": "pv1"}, "description": "Daily volume"},
+    ])
+    importer = WQDocImporter(wiki_root=tmp_path, client=client)
+    stats = await importer.import_all(region="USA", universe="TOP3000", delay=1)  # default include_fields=False
+    assert stats.datasets == 1
+    assert stats.fields == 0   # 没有写 per-field 页
+    assert not (tmp_path / "fields").exists() or not any((tmp_path / "fields").iterdir())
+    # 但 dataset 页含字段清单
+    ds_body = (tmp_path / "datasets" / "pv1.md").read_text(encoding="utf-8")
+    assert "close" in ds_body and "volume" in ds_body
+    # 字段 ID 落到了 dictionary/auto.txt
+    auto_txt = (tmp_path / "dictionary" / "auto.txt").read_text(encoding="utf-8")
+    assert "close" in auto_txt and "volume" in auto_txt
 
 
 @pytest.mark.asyncio
