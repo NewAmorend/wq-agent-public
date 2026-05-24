@@ -272,6 +272,48 @@ class Database:
             })
         return out
 
+    async def list_refine_candidates(self, limit: int = 10) -> list[dict[str, Any]]:
+        """差一点就过的 alpha：grade=MEDIUM（恰好 1 项 WQ 关键检查 FAIL），按 fitness 倒序。
+
+        REJECT/LOW 不进 —— 改它们性价比低；HIGH 已可提交无需 refine。
+        """
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            """SELECT a.id AS alpha_id, a.expression, b.fitness, b.sharpe, b.turnover,
+                      b.returns, b.grade, b.checks, b.created_at
+               FROM alphas a
+               JOIN backtest_results b ON a.id = b.alpha_id
+               WHERE b.grade = 'medium' AND b.fitness IS NOT NULL
+               ORDER BY b.fitness DESC, b.created_at DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            checks: list[dict] = []
+            if r["checks"]:
+                try:
+                    checks = json.loads(r["checks"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            failed = [
+                str(c.get("name", ""))
+                for c in checks
+                if isinstance(c, dict) and str(c.get("result", "")).upper() == "FAIL"
+            ]
+            out.append({
+                "alpha_id": r["alpha_id"],
+                "expression": r["expression"],
+                "fitness": r["fitness"],
+                "sharpe": r["sharpe"],
+                "turnover": r["turnover"],
+                "returns": r["returns"],
+                "grade": r["grade"],
+                "failed_checks": failed,
+            })
+        return out
+
     async def list_high_quality_alphas(self, min_fitness: float = 1.0) -> list[dict[str, Any]]:
         assert self._conn is not None
         cursor = await self._conn.execute(

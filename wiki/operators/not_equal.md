@@ -6,7 +6,7 @@ tags:
 - operator
 sources:
 - worldquantbrain-api
-created: '2026-05-22'
+created: '2026-05-24'
 operator_name: not_equal
 category: Logical
 operator_type: SCALAR
@@ -30,4 +30,4 @@ Returns 1 ('true') if input1 and input2 are different numbers. Otherwise, return
 
 ## 使用提示（人工补充）
 
-- TODO：典型适用场景、常配合的算子（用 [[wikilink]]）、参数范围、踩坑
+- TODO：典型适用场景、常配合的算子（用 `[[页名]]` 互链）、参数范围、踩坑

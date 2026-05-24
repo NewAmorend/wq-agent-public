@@ -6,7 +6,7 @@ tags:
 - transformational
 sources:
 - worldquantbrain-api
-created: '2026-05-22'
+created: '2026-05-24'
 operator_name: bucket
 category: Transformational
 operator_type: SCALAR
@@ -32,4 +32,4 @@ The bucket operator creates custom groups by dividing data into buckets (ranges)
 
 ## 使用提示（人工补充）
 
-- TODO：典型适用场景、常配合的算子（用 [[wikilink]]）、参数范围、踩坑
+- TODO：典型适用场景、常配合的算子（用 `[[页名]]` 互链）、参数范围、踩坑

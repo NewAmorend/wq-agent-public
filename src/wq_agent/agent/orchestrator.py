@@ -18,6 +18,7 @@ from ..wq.client import WQClient
 from ..llm import LLMFactory
 from ..llm.base import BaseLLMProvider
 from ..generator.llm import LLMAlphaGenerator
+from ..generator.refine import RefineAlphaGenerator
 from ..generator.template import TemplateAlphaGenerator
 from ..generator.factor import FactorMiningGenerator
 from ..generator.base import BaseAlphaGenerator
@@ -159,6 +160,96 @@ class Orchestrator:
     async def backtest(self, alpha_ids: list[int]) -> list[BacktestResult]:
         engine = BacktestEngine(self.wq, self.db, self.settings)
         return await engine.backtest_batch(alpha_ids)
+
+    async def refine(
+        self,
+        base_id: int | None = None,
+        count: int = 10,
+        auto_backtest: bool = True,
+    ) -> list[AlphaRecord]:
+        """对 MEDIUM 评级（差一项即过）的 alpha 生成微调变体。
+
+        base_id=None 时自动从 db 拉 fitness 最高的 MEDIUM 候选。
+        """
+        if base_id is not None:
+            backtest = await self.db.get_backtest_result(base_id)
+            alpha = await self.db.get_alpha(base_id)
+            if alpha is None or backtest is None:
+                raise ValueError(f"Alpha #{base_id} not found or never backtested")
+            base = {
+                "alpha_id": base_id,
+                "expression": alpha.expression,
+                "fitness": backtest.fitness,
+                "sharpe": backtest.sharpe,
+                "turnover": backtest.turnover,
+                "returns": backtest.returns,
+                "grade": backtest.grade.value if backtest.grade else None,
+                "failed_checks": [
+                    str(c.get("name", ""))
+                    for c in (backtest.checks or [])
+                    if isinstance(c, dict) and str(c.get("result", "")).upper() == "FAIL"
+                ],
+            }
+        else:
+            candidates = await self.db.list_refine_candidates(limit=1)
+            if not candidates:
+                console.print(
+                    "[yellow]No MEDIUM-grade alphas to refine. "
+                    "Run `wq-agent run` first to produce some near-miss candidates.[/yellow]"
+                )
+                return []
+            base = candidates[0]
+            console.print(
+                f"[cyan]Auto-picked alpha #{base['alpha_id']} "
+                f"(fitness={base['fitness']:.3f}, failed={base['failed_checks']})[/cyan]"
+            )
+
+        if not self._llm:
+            raise RuntimeError("Orchestrator not initialized")
+        refiner = RefineAlphaGenerator(
+            llm=self._llm,
+            wiki_retriever=self._wiki_index.retriever if self._wiki_index else None,
+            wiki_top_k=self.settings.WIKI_RETRIEVE_TOP_K,
+            wiki_summary_chars=self.settings.WIKI_SUMMARY_CHARS,
+        )
+
+        console.print("[cyan]Fetching fields & operators for refine context...[/cyan]")
+        data_fields = await self.wq.get_data_fields()
+        operators = await self.wq.get_operators()
+
+        console.print(f"[cyan]Generating {count} refine variants...[/cyan]")
+        variants = await refiner.refine(base, data_fields, operators, count=count)
+        if not variants:
+            console.print("[yellow]Refine returned 0 variants[/yellow]")
+            return []
+        console.print(f"  Generated [green]{len(variants)}[/green] variants")
+
+        records = [
+            AlphaRecord(
+                expression=expr,
+                strategy=GenerationStrategy.LLM,
+                llm_model=f"refine:{base['alpha_id']}",
+            )
+            for expr in variants
+        ]
+        ids = await self.db.batch_insert_alphas(records)
+        for rec, rid in zip(records, ids):
+            rec.id = rid
+
+        if auto_backtest and ids:
+            console.print(f"[cyan]Backtesting {len(ids)} variants...[/cyan]")
+            engine = BacktestEngine(self.wq, self.db, self.settings)
+            results = await engine.backtest_batch(ids)
+            self._display_results(records, results)
+            if self._auto_recorder:
+                stats = await self._auto_recorder.record(records, results)
+                if stats["entries"] or stats["lessons"]:
+                    console.print(
+                        f"[dim]Wiki auto-record: +{stats['entries']} entries, "
+                        f"+{stats['lessons']} lessons[/dim]"
+                    )
+
+        return records
 
     async def list_high_quality(self, min_fitness: float | None = None) -> list[dict[str, Any]]:
         min_fitness = min_fitness or self.settings.MIN_FITNESS

@@ -207,6 +207,30 @@ def run(
 
 
 @app.command()
+def refine(
+    base_id: Optional[int] = typer.Option(None, "--base-id", help="Alpha id to refine; auto-picks best MEDIUM if omitted"),
+    count: int = typer.Option(10, "--count", "-n", help="Number of variants to generate"),
+    no_backtest: bool = typer.Option(False, "--no-backtest"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Generate refined variants of a near-miss (MEDIUM-grade) alpha to push it to HIGH."""
+    _setup_logging(verbose)
+
+    async def _run():
+        orch = Orchestrator()
+        try:
+            await orch.initialize()
+            await orch.refine(base_id=base_id, count=count, auto_backtest=not no_backtest)
+        except Exception as e:
+            console.print(f"[bold red]Error: {e}[/bold red]")
+            raise typer.Exit(1)
+        finally:
+            await orch.close()
+
+    asyncio.run(_run())
+
+
+@app.command()
 def status(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):

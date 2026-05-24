@@ -6,7 +6,7 @@ tags:
 - time_series
 sources:
 - worldquantbrain-api
-created: '2026-05-22'
+created: '2026-05-24'
 operator_name: ts_count_nans
 category: Time Series
 operator_type: SCALAR
@@ -30,4 +30,4 @@ Counts the number of missing (NaN) values in a data series over a specified numb
 
 ## 使用提示（人工补充）
 
-- TODO：典型适用场景、常配合的算子（用 [[wikilink]]）、参数范围、踩坑
+- TODO：典型适用场景、常配合的算子（用 `[[页名]]` 互链）、参数范围、踩坑
