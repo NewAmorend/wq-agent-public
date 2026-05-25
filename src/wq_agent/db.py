@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 from datetime import datetime
 from typing import Any
@@ -9,6 +10,81 @@ import aiosqlite
 from loguru import logger
 
 from .models import AlphaRecord, AlphaStatus, BacktestResult, GenerationStrategy, QualityGrade
+
+
+# Structural-skeleton normalizer for exemplar diversification.
+# 把表达式里的字段名（>=3 字符的小写标识符）替换成 FIELD、数字替换成 N，
+# 得到 "结构骨架"。两个 alpha 同骨架意味着只是换了字段/窗口，本质上结构相同。
+_FIELD_RE = re.compile(r"\b[a-z_][a-z0-9_]{2,}\b")
+_NUM_RE = re.compile(r"\b\d+(\.\d+)?\b")
+# 不视为 field 的关键字（算子名、分组名等）—— 必须保留以区分结构。
+_SKELETON_KEEP = {
+    "rank", "zscore", "scale", "normalize", "winsorize", "quantile", "log", "abs",
+    "sign", "sqrt", "inverse", "reverse", "power", "signed_power", "tanh", "sigmoid",
+    "exp", "min", "max", "median",
+    "ts_mean", "ts_std_dev", "ts_sum", "ts_max", "ts_min", "ts_delta", "ts_delay",
+    "ts_shift", "ts_rank", "ts_corr", "ts_covariance", "ts_decay_linear", "ts_zscore",
+    "ts_av_diff", "ts_backfill", "ts_scale", "ts_quantile", "ts_argmax", "ts_argmin",
+    "ts_arg_max", "ts_arg_min", "ts_product", "ts_step", "ts_count_nans", "ts_regression",
+    "decay_linear", "hump", "jump_decay", "days_from_last_change", "trade_when",
+    "group_neutralize", "group_rank", "group_zscore", "group_mean", "group_min",
+    "group_max", "group_scale", "group_backfill", "group_cartesian_product",
+    "vector_neut", "vec_avg", "vec_max", "vec_min", "vec_sum",
+    "add", "subtract", "multiply", "divide", "densify", "to_nan",
+    "bucket", "combo_a", "trade_when", "if_else", "is_nan",
+    "and", "or", "not", "where",
+    "reduce_avg", "reduce_choose", "reduce_count", "reduce_ir", "reduce_max",
+    "reduce_min", "reduce_norm", "reduce_powersum", "reduce_range", "reduce_skewness",
+    "reduce_stddev", "reduce_sum", "self_corr",
+    "subindustry", "industry", "sector", "country", "currency", "exchange",
+}
+
+
+def expression_skeleton(expr: str) -> str:
+    """规约表达式为"结构骨架"，用于 exemplar 多样性去重。
+
+    示例：
+      ts_decay_linear(rank(mdl177_x), 20) -> ts_decay_linear(rank(FIELD), N)
+      ts_decay_linear(rank(fnd6_y), 60)   -> ts_decay_linear(rank(FIELD), N)   ← 同骨架
+      add(rank(close), ts_corr(vwap, volume, 10)) -> add(rank(FIELD), ts_corr(FIELD, FIELD, N))
+    """
+    if not expr:
+        return ""
+
+    def _replace(m: re.Match) -> str:
+        tok = m.group(0)
+        return tok if tok in _SKELETON_KEEP else "FIELD"
+
+    skel = _FIELD_RE.sub(_replace, expr.lower())
+    skel = _NUM_RE.sub("N", skel)
+    skel = re.sub(r"\s+", "", skel)
+    return skel
+
+
+def expression_outer_signature(expr: str, levels: int = 2) -> str:
+    """提取表达式最外层 N 个算子链作为"外壳签名"，用于阻止同 wrapper 家族霸屏。
+
+    full skeleton 看整个结构，outer signature 只看最外两层算子。例如：
+      ts_decay_linear(group_neutralize(rank(F), subindustry), N)  ← outer 2: ts_decay_linear(group_neutralize)
+      ts_decay_linear(group_neutralize(rank(signed_power(F,N)), subindustry), N)  ← 同 outer 2
+
+    所以两个 alpha 即使骨架不同，只要外壳是同一组 wrapper 就被视为同 family。
+    """
+    if not expr:
+        return ""
+    # 用 skeleton 形式再扫前 N 个开括号前的算子名
+    skel = expression_skeleton(expr)
+    sig_ops: list[str] = []
+    i = 0
+    while i < len(skel) and len(sig_ops) < levels:
+        # 找下一个算子（以字母开头，跟到 "(" 前）
+        m = re.match(r"([a-z_][a-z0-9_]*)\(", skel[i:])
+        if not m:
+            break
+        op = m.group(1)
+        sig_ops.append(op)
+        i += m.end()
+    return "(".join(sig_ops)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alphas (
@@ -343,13 +419,22 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
-    async def list_top_fitness_alphas(self, limit: int = 5, min_fitness: float = 0.0) -> list[dict[str, Any]]:
+    async def list_top_fitness_alphas(
+        self, limit: int = 5, min_fitness: float = 0.0,
+        diversify_by_skeleton: bool = True,
+    ) -> list[dict[str, Any]]:
         """按 fitness 降序取 top-N，只要 fitness > min_fitness。用于 LLM prompt 的"历史模板"段。
 
         和 list_high_quality_alphas 的区别：那个是用 MIN_FITNESS 阈值（通常 1.0）筛"可提交"的，
         冷启动时永远为空。这个是 "把目前最好的 N 个端给 LLM 看"，哪怕 fitness 只有 0.4 也总比没有强。
+
+        diversify_by_skeleton（默认 True）：拉 top 4*limit，按"结构骨架"去重再取 top-N。
+        防止 exemplar mono-culture——比如 ts_decay_linear(group_neutralize(rank(F),subindustry),N)
+        这种结构占满 top-5 后，LLM 强行往别的字段套同样结构，反而把生成质量拖垮。
         """
         assert self._conn is not None
+        # 多拉一些候选给去重留余量
+        fetch_limit = limit * 4 if diversify_by_skeleton else limit
         cursor = await self._conn.execute(
             """SELECT a.expression, b.fitness, b.sharpe, b.turnover, b.returns, b.grade
                FROM alphas a
@@ -357,10 +442,48 @@ class Database:
                WHERE b.fitness IS NOT NULL AND b.fitness > ?
                ORDER BY b.fitness DESC
                LIMIT ?""",
-            (min_fitness, limit),
+            (min_fitness, fetch_limit),
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        candidates = [dict(r) for r in rows]
+
+        if not diversify_by_skeleton:
+            return candidates[:limit]
+
+        # 两阶段去重：先按 outer signature（前 2 层算子）防 wrapper 家族霸屏，
+        # 再按 full skeleton 兜底（同 outer 但内层不同也算不同）。
+        # 每个 outer 家族只许 1 个代表（fitness 最高）。
+        seen_outer: set[str] = set()
+        seen_skeletons: set[str] = set()
+        diversified: list[dict[str, Any]] = []
+        for row in candidates:
+            expr = row.get("expression", "")
+            outer = expression_outer_signature(expr, levels=2)
+            if outer and outer in seen_outer:
+                continue
+            skel = expression_skeleton(expr)
+            if skel in seen_skeletons:
+                continue
+            seen_outer.add(outer)
+            seen_skeletons.add(skel)
+            diversified.append(row)
+            if len(diversified) >= limit:
+                break
+
+        # 如果去重后不够 limit 个（库里架构种类太少），fallback 放宽到只看 skeleton
+        if len(diversified) < limit:
+            for row in candidates:
+                if row in diversified:
+                    continue
+                skel = expression_skeleton(row.get("expression", ""))
+                if skel in seen_skeletons:
+                    continue
+                seen_skeletons.add(skel)
+                diversified.append(row)
+                if len(diversified) >= limit:
+                    break
+
+        return diversified[:limit]
 
     async def get_stats(self) -> dict[str, int]:
         assert self._conn is not None
