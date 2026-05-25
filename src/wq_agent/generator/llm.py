@@ -186,6 +186,7 @@ reduce_sum(input) - 求和归约
 可用字段：{fields}
 可用运算符：{operators}
 {forbidden_section}
+{proven_wrappers_section}
 {exemplars_section}
 {knowledge_section}
 {previous_results_section}
@@ -212,6 +213,45 @@ reduce_sum(input) - 求和归约
 
 请深入思考每个表达式的金融逻辑基础、预期表现特征以及在实际投资中的适用性。设计完成后，直接输出{count}个表达式，每行一个，规则不允许有其他解释。
 Generate {count} expressions:"""
+
+
+# ============================================================================
+# 实测高 Fitness Wrapper 模式（QuantGPT 文档 + WorldQuant 社区经验沉淀）
+#
+# 这些 wrapper 模式不是 LLM 想出来的，是社区/比赛实测验证过的"信号外套"。
+# 项目自己的 exemplars 段是数据驱动的（来自 db），这个 PROVEN_WRAPPERS 是经验
+# 驱动的（来自外部沉淀），互补——前者教 LLM "你做过什么 work"，后者教 "整个领
+# 域里什么 work"。
+#
+# 解决我们卡在 0.7 fitness 平台的两个核心问题：
+#   - LOW_SHARPE   ← ts_decay_linear 平滑信号 + winsorize 去极值
+#   - HIGH_TURNOVER ← trade_when 选择性交易 + ts_decay_linear 让信号惯性
+# ============================================================================
+PROVEN_WRAPPERS_SECTION = """
+## 🎯 实测高 Fitness Wrapper 模式（必看，强烈推荐使用）
+
+WorldQuant 社区 + 比赛实测验证有效的"信号外套"——把你设计的原始信号 `<signal>` 套进
+下面任一 wrapper，几乎总能把 Fitness 推到 1.0+。**这不是建议，是数据。**
+
+### 单层 wrapper（最简单，先试这些）
+- `ts_decay_linear(rank(<signal>), 5)` — 实测 Fitness ~2.86（VWAP 偏离类）
+- `-1 * rank(ts_zscore(<signal>, 63))` — 实测 Fitness ~1.26-1.70（估值/基本面类）
+- `rank(ts_rank(<signal>, 40))` — 实测 Fitness ~1.42-1.58（动量类，双重排名）
+
+### 控换手专用（如果 turnover > 50%）
+- `trade_when(ts_std(returns,20) < 0.03, rank(<signal>), 0)` — **最强降换手算子**
+- `hump(rank(<signal>), hump=0.05)` — 限制日内变化幅度
+
+### 复合 + 过滤（信号好但 sharpe 不够时）
+- `-ts_av_diff(<signal>, 50) * ts_corr(<signal>, volume, 50)` — 实测 Fitness ~1.70
+- `ts_decay_linear(group_neutralize(rank(<signal>), subindustry), 10)` — 行业中性化后平滑
+
+### 关键观察
+1. **`ts_decay_linear` 是最广谱的 sharpe 提升器**——几乎所有信号外套一层都涨
+2. **`trade_when` + `ts_std(returns)` 阈值**是 turnover 杀手，能从 60% 降到 20%
+3. **`-1 * rank(ts_zscore(_, 63))`** 对所有"水平类"因子（pe、roe、cap 等）都好用
+4. 切忌嵌套 5 层以上——wrapper 加一层就行，加两层会把信号磨平
+"""
 
 
 class LLMAlphaGenerator(BaseAlphaGenerator):
@@ -261,6 +301,7 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
             fields="\n".join(fields_str),
             operators="\n".join(operators_str),
             forbidden_section=forbidden_section,
+            proven_wrappers_section=PROVEN_WRAPPERS_SECTION,
             exemplars_section=exemplars_section,
             knowledge_section=knowledge_section,
             previous_results_section=previous_section,
