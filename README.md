@@ -80,7 +80,11 @@ wq-agent diversity
 2. **历史低分骨架排除**（`DEDUP_FITNESS_FLOOR`）— 同骨架历史最佳 fitness 始终低于阈值的结构不再重测
 3. **已提交 / self_correlation FAIL 骨架黑名单** — 注入 prompt 并二次过滤
 4. **Exemplar 三级多样化** — 防止高 fitness 模板单一栽培（同 wrapper 霸屏）
-5. **`LLM_GEN_TEMPERATURE`** — 调高采样温度直接增大结构/字段多样性
+5. **Wrapper 样例轮换** — 每批从更大的 wrapper 池抽样展示（含 decay+rank 之外的变体），
+   不再每次都把 LLM 往同几个外壳上推
+6. **结构饱和反馈** — 用 `diversity` 的家族分布，把库里已饱和的 wrapper 家族喂回 prompt
+   提示 LLM 这批换别的结构
+7. **`LLM_GEN_TEMPERATURE`** — 调高采样温度直接增大结构/字段多样性
 
 用 `wq-agent diversity` 观察 wrapper 家族集中度：`family/alpha ratio` 越低说明结构越单一。
 

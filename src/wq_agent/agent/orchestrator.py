@@ -163,12 +163,25 @@ class Orchestrator:
                     f"(best fitness < {self.settings.DEDUP_FITNESS_FLOOR})"
                 )
 
+        # 库里 wrapper 家族分布——喂给生成器提示"避开已饱和结构"，对抗单一栽培
+        family_distribution = await self.db.get_skeleton_distribution(limit=10)
+        over = [
+            f for f in family_distribution.get("top_outer2", [])
+            if f.get("count", 0) >= max(5, int(family_distribution.get("total_backtested", 0) * 0.2))
+        ]
+        if over and family_distribution.get("total_backtested", 0) >= 10:
+            console.print(
+                f"  Steering away from [yellow]{len(over)}[/yellow] over-represented wrapper "
+                f"families (top: {over[0]['signature']}... ×{over[0]['count']})"
+            )
+
         console.print(f"\n[bold cyan]Generating {count} alphas using {strategy.value} strategy...[/bold cyan]")
         expressions = await generator.generate(
             data_fields, operators, previous_results=previous, count=count,
             forbidden_fields=forbidden, high_fitness_exemplars=exemplars,
             submitted_skeletons=submitted_skeletons,
             extra_exclude_skeletons=low_fit_skeletons,
+            family_distribution=family_distribution,
         )
         console.print(f"  Generated [green]{len(expressions)}[/green] valid expressions")
 

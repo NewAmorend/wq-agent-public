@@ -7,7 +7,7 @@ from typing import Any
 from loguru import logger
 
 from ..llm.base import BaseLLMProvider
-from .llm import LLMAlphaGenerator, PROVEN_WRAPPERS_SECTION
+from .llm import LLMAlphaGenerator, build_proven_wrappers_section
 
 
 _FAIL_TO_HINT = {
@@ -236,7 +236,7 @@ class RefineAlphaGenerator:
             n_fields_total=len(data_fields),
             operators=operators_str,
             knowledge_section=knowledge_section,
-            proven_wrappers_section=PROVEN_WRAPPERS_SECTION,
+            proven_wrappers_section=build_proven_wrappers_section(),
             submitted_skeletons_section=submitted_skeletons_section,
             exemplars_section=exemplars_section,
         )

@@ -187,6 +187,7 @@ reduce_sum(input) - 求和归约
 可用运算符：{operators}
 {forbidden_section}
 {submitted_skeletons_section}
+{family_saturation_section}
 {proven_wrappers_section}
 {exemplars_section}
 {knowledge_section}
@@ -228,31 +229,71 @@ Generate {count} expressions:"""
 #   - LOW_SHARPE   ← ts_decay_linear 平滑信号 + winsorize 去极值
 #   - HIGH_TURNOVER ← trade_when 选择性交易 + ts_decay_linear 让信号惯性
 # ============================================================================
-PROVEN_WRAPPERS_SECTION = """
-## 🎯 实测高 Fitness Wrapper 模式（必看，强烈推荐使用）
+# Wrapper 样例池——按用途分组。每次生成只**抽样**展示一个子集（而非每次全列），
+# 打破"每个 prompt 都把 LLM 往同 3 个外壳上推"导致的结构单一栽培。
+# MEASURED 组带社区/比赛实测 fitness；VARIETY 组是结构多样性候选，鼓励跳出
+# ts_decay_linear(rank(...)) 单一家族。
+_WRAPPER_POOL_MEASURED = [
+    "`ts_decay_linear(rank(<signal>), 5)` — 实测 Fitness ~2.86（VWAP 偏离类）",
+    "`-1 * rank(ts_zscore(<signal>, 63))` — 实测 Fitness ~1.26-1.70（估值/基本面类）",
+    "`rank(ts_rank(<signal>, 40))` — 实测 Fitness ~1.42-1.58（动量类，双重排名）",
+    "`-ts_av_diff(<signal>, 50) * ts_corr(<signal>, volume, 50)` — 实测 Fitness ~1.70",
+    "`ts_decay_linear(group_neutralize(rank(<signal>), subindustry), 10)` — 行业中性化后平滑",
+]
+_WRAPPER_POOL_TURNOVER = [
+    "`trade_when(ts_std(returns,20) < 0.03, rank(<signal>), 0)` — 最强降换手算子",
+    "`hump(rank(<signal>), hump=0.05)` — 限制日内变化幅度",
+    "`ts_target_tvr_decay(rank(<signal>), target_tvr=0.1)` — 直接定 target 换手率",
+]
+_WRAPPER_POOL_VARIETY = [
+    "`group_rank(ts_delta(<signal>, 20), subindustry)` — 行业内排名差分（横截面反转，非 decay 系）",
+    "`zscore(ts_regression(<signal>, returns, 60, rettype=2))` — 残差类（剥离市场成分）",
+    "`signed_power(rank(<signal>) - 0.5, 0.5)` — 非线性压缩极端排名",
+    "`ts_zscore(<signal>, 20) - ts_zscore(<signal>, 120)` — 快慢窗口之差（多周期动量）",
+    "`vector_neut(rank(<signal>), rank(volume))` — 对成交量向量中性化",
+]
 
-WorldQuant 社区 + 比赛实测验证有效的"信号外套"——把你设计的原始信号 `<signal>` 套进
-下面任一 wrapper，几乎总能把 Fitness 推到 1.0+。**这不是建议，是数据。**
 
-### 单层 wrapper（最简单，先试这些）
-- `ts_decay_linear(rank(<signal>), 5)` — 实测 Fitness ~2.86（VWAP 偏离类）
-- `-1 * rank(ts_zscore(<signal>, 63))` — 实测 Fitness ~1.26-1.70（估值/基本面类）
-- `rank(ts_rank(<signal>, 40))` — 实测 Fitness ~1.42-1.58（动量类，双重排名）
+def build_proven_wrappers_section(rng: "random.Random | None" = None) -> str:
+    """渲染 wrapper 推荐段，每次**抽样**一个子集（默认含变体）以打破结构单一化。
 
-### 控换手专用（如果 turnover > 50%）
-- `trade_when(ts_std(returns,20) < 0.03, rank(<signal>), 0)` — **最强降换手算子**
-- `hump(rank(<signal>), hump=0.05)` — 限制日内变化幅度
+    教学内容（标题 + 关键观察）始终保留；只有具体 wrapper 样例是轮换的。
+    传入固定 seed 的 Random 可得确定性输出（测试用）。
+    """
+    r = rng or random
+    measured = r.sample(_WRAPPER_POOL_MEASURED, min(3, len(_WRAPPER_POOL_MEASURED)))
+    turnover = r.sample(_WRAPPER_POOL_TURNOVER, min(2, len(_WRAPPER_POOL_TURNOVER)))
+    variety = r.sample(_WRAPPER_POOL_VARIETY, min(3, len(_WRAPPER_POOL_VARIETY)))
 
-### 复合 + 过滤（信号好但 sharpe 不够时）
-- `-ts_av_diff(<signal>, 50) * ts_corr(<signal>, volume, 50)` — 实测 Fitness ~1.70
-- `ts_decay_linear(group_neutralize(rank(<signal>), subindustry), 10)` — 行业中性化后平滑
+    lines = [
+        "",
+        "## 🎯 实测高 Fitness Wrapper 模式（必看，强烈推荐使用）",
+        "",
+        "WorldQuant 社区 + 比赛实测验证有效的\"信号外套\"——把你设计的原始信号 `<signal>` 套进",
+        "下面任一 wrapper，几乎总能把 Fitness 推到 1.0+。**这不是建议，是数据。**",
+        "（注：以下样例每批轮换，目的是让你尝试**不同结构**，不要每次都套同一个壳子。）",
+        "",
+        "### 实测有效 wrapper",
+    ]
+    lines += [f"- {w}" for w in measured]
+    lines += ["", "### 控换手专用（如果 turnover > 50%）"]
+    lines += [f"- {w}" for w in turnover]
+    lines += ["", "### 结构变体（鼓励跳出 decay+rank 单一家族）"]
+    lines += [f"- {w}" for w in variety]
+    lines += [
+        "",
+        "### 关键观察",
+        "1. **`ts_decay_linear` 是广谱 sharpe 提升器**，但库里已经很多——优先试别的外壳保持多样性",
+        "2. **`trade_when` + `ts_std(returns)` 阈值**是 turnover 杀手，能从 60% 降到 20%",
+        "3. **`-1 * rank(ts_zscore(_, 63))`** 对所有\"水平类\"因子（pe、roe、cap 等）都好用",
+        "4. 切忌嵌套 5 层以上——wrapper 加一层就行，加两层会把信号磨平",
+        "",
+    ]
+    return "\n".join(lines)
 
-### 关键观察
-1. **`ts_decay_linear` 是最广谱的 sharpe 提升器**——几乎所有信号外套一层都涨
-2. **`trade_when` + `ts_std(returns)` 阈值**是 turnover 杀手，能从 60% 降到 20%
-3. **`-1 * rank(ts_zscore(_, 63))`** 对所有"水平类"因子（pe、roe、cap 等）都好用
-4. 切忌嵌套 5 层以上——wrapper 加一层就行，加两层会把信号磨平
-"""
+
+# 向后兼容别名：少数静态引用仍可用一个确定性渲染。新代码请调 build_proven_wrappers_section()。
+PROVEN_WRAPPERS_SECTION = build_proven_wrappers_section(random.Random(0))
 
 
 class LLMAlphaGenerator(BaseAlphaGenerator):
@@ -280,6 +321,7 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
         high_fitness_exemplars: list[dict[str, Any]] | None = None,
         submitted_skeletons: set[str] | None = None,
         extra_exclude_skeletons: set[str] | None = None,
+        family_distribution: dict[str, Any] | None = None,
     ) -> list[str]:
         fields_str = [f"{f.id} ({f.description or 'No description'})" for f in data_fields]
         operators_by_cat: dict[str, list[str]] = {}
@@ -303,13 +345,17 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
 
         submitted_skeletons_section = self._build_submitted_skeletons_section(submitted_skeletons)
 
+        family_saturation_section = self._build_family_saturation_section(family_distribution)
+
         prompt = _ALPHA_PROMPT_TEMPLATE.format(
             count=count,
             fields="\n".join(fields_str),
             operators="\n".join(operators_str),
             forbidden_section=forbidden_section,
             submitted_skeletons_section=submitted_skeletons_section,
-            proven_wrappers_section=PROVEN_WRAPPERS_SECTION,
+            family_saturation_section=family_saturation_section,
+            # 每批重新抽样 wrapper 样例，避免每次都把 LLM 往同几个外壳上推
+            proven_wrappers_section=build_proven_wrappers_section(),
             exemplars_section=exemplars_section,
             knowledge_section=knowledge_section,
             previous_results_section=previous_section,
@@ -496,6 +542,44 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
             lines.append(f"- `{skel[:120]}`")
         if len(skeletons) > len(sample):
             lines.append(f"- ... 还有 {len(skeletons) - len(sample)} 个")
+        lines.append("")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_family_saturation_section(distribution: dict[str, Any] | None) -> str:
+        """根据库里实际的 wrapper 家族分布，提示 LLM 避开已饱和的结构。
+
+        这是 #6 diversity 数据的生成侧应用：当某些 outer-2 家族在库里占比过高，
+        就明确告诉 LLM "这些已经做太多了，这批换别的结构"，用反馈对抗单一栽培。
+        数据太少（< 10 个）或本来就分散时不打扰，返回空串。
+        """
+        if not distribution:
+            return ""
+        total = distribution.get("total_backtested", 0)
+        families = distribution.get("top_outer2") or []
+        if total < 10 or not families:
+            return ""
+        # 阈值：占比 ≥ 20% 或 count ≥ 5 视为"饱和"
+        floor = max(5, int(total * 0.2))
+        over = [f for f in families if f.get("count", 0) >= floor]
+        if not over:
+            return ""
+        lines = [
+            "",
+            f"## ⚖️ 结构饱和提示（库里已有 {total} 个回测因子）",
+            "",
+            "以下 wrapper 家族（最外两层算子）在库里**已经很多**，这批请尽量用**别的结构**，",
+            "避免继续往同一个外壳里塞信号（同壳子换字段对 WQ 多半算高相关、提交会被拒）：",
+            "",
+        ]
+        for f in over:
+            sig = f.get("signature", "?")
+            cnt = f.get("count", 0)
+            avg = f.get("avg_fitness")
+            avg_str = f"，平均 fitness {avg:.2f}" if isinstance(avg, (int, float)) else ""
+            lines.append(f"- `{sig}...`（已 {cnt} 个{avg_str}）")
+        lines.append("")
+        lines.append("👉 优先尝试上面「结构变体」里 decay+rank 之外的外壳，或全新的算子组合。")
         lines.append("")
         return "\n".join(lines)
 
