@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from loguru import logger
+
 
 def parse_pnl_response(data: dict) -> tuple[list[str], list[float]]:
     """WQ PnL recordset（累计 PnL）→（日期, 每日收益）。
@@ -90,3 +94,38 @@ def is_hard_redundant(
     if cand_sharpe is None:
         return True  # 相关超阈值又拿不到候选 sharpe → 保守判重
     return cand_sharpe < (1.0 + margin) * ref_sharpe
+
+
+@dataclass
+class Verdict:
+    alpha_id: int
+    hard_redundant: bool
+    hard_corr: float
+    hard_ref_id: int | None
+    soft_corr: float
+    soft_ref_id: int | None
+
+
+class CorrelationScreener:
+    """对候选 alpha 算 PnL 相关性，命中硬 gate 写 SELF_CORRELATION FAIL。"""
+
+    def __init__(self, db, wq, settings):
+        self.db = db
+        self.wq = wq
+        self.settings = settings
+
+    async def ensure_pnl(
+        self, alpha_id: int, wq_alpha_id: str | None,
+    ) -> tuple[list[str], list[float]] | None:
+        """懒加载：缓存命中直接返回；否则拉取并缓存。失败返回 None（不缓存）。"""
+        cached = await self.db.get_cached_pnl(alpha_id)
+        if cached is not None:
+            return cached
+        if not wq_alpha_id:
+            return None
+        fetched = await self.wq.get_pnl(wq_alpha_id)
+        if fetched is None:
+            return None
+        dates, returns = fetched
+        await self.db.upsert_pnl(alpha_id, wq_alpha_id, dates, returns)
+        return dates, returns

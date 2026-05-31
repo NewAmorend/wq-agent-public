@@ -127,3 +127,39 @@ def test_is_hard_redundant_rule():
     # no ref -> NOT redundant
     assert is_hard_redundant(cand_sharpe=1.30, max_corr=0.0, ref_sharpe=None,
                              threshold=0.7, margin=0.10) is False
+
+
+from wq_agent.engine.correlation import CorrelationScreener
+from wq_agent.config import Settings
+
+
+class _FakeWQ:
+    def __init__(self, pnl_by_id):
+        self.pnl_by_id = pnl_by_id
+        self.calls = 0
+
+    async def get_pnl(self, wq_alpha_id):
+        self.calls += 1
+        return self.pnl_by_id.get(wq_alpha_id)
+
+
+@pytest.mark.asyncio
+async def test_ensure_pnl_lazy_and_cached(tmp_path):
+    db = Database(str(tmp_path / "wq.db"))
+    await db.connect()
+    try:
+        wq = _FakeWQ({"WQ1": (["d1", "d2"], [0.1, 0.2])})
+        scr = CorrelationScreener(db, wq, Settings(_env_file=None))
+        # first call fetches + caches
+        got = await scr.ensure_pnl(1, "WQ1")
+        assert got == (["d1", "d2"], [0.1, 0.2])
+        assert wq.calls == 1
+        # second call uses cache (no new fetch)
+        got2 = await scr.ensure_pnl(1, "WQ1")
+        assert got2 == (["d1", "d2"], [0.1, 0.2])
+        assert wq.calls == 1
+        # fetch failure -> None, not cached
+        none = await scr.ensure_pnl(2, "MISSING")
+        assert none is None
+    finally:
+        await db.close()
