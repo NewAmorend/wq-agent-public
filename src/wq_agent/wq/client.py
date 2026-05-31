@@ -391,6 +391,23 @@ class WQClient:
         is_data = data.get("is") or {}
         return is_data.get("checks")
 
+    async def get_pnl(self, wq_alpha_id: str) -> tuple[list[str], list[float]] | None:
+        """拉 alpha 的 PnL recordset → （日期, 每日收益）。失败返回 None（fail-open）。"""
+        from ..engine.correlation import parse_pnl_response
+        try:
+            resp = await self._request("get", f"/alphas/{wq_alpha_id}/recordsets/pnl")
+        except Exception as exc:
+            logger.warning(f"get_pnl({wq_alpha_id}) request failed: {exc}")
+            return None
+        if resp.status_code != 200:
+            logger.warning(f"get_pnl({wq_alpha_id}) status {resp.status_code}")
+            return None
+        try:
+            return parse_pnl_response(resp.json())
+        except Exception as exc:
+            logger.warning(f"get_pnl({wq_alpha_id}) parse failed: {exc}")
+            return None
+
 
 def _DEFAULT_OPERATORS() -> list[WQOperator]:
     defaults = [

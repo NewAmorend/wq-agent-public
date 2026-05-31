@@ -54,3 +54,20 @@ async def test_list_reference_alphas(tmp_path):
         assert [r["alpha_id"] for r in ref["high"]] == [hi]   # HIGH but not submitted
     finally:
         await db.close()
+
+
+from wq_agent.engine.correlation import parse_pnl_response
+
+
+def test_parse_pnl_response_diffs_to_daily_returns():
+    data = {"records": [["2020-01-02", 0.0], ["2020-01-03", 1.5], ["2020-01-06", 1.0]]}
+    dates, returns = parse_pnl_response(data)
+    assert dates == ["2020-01-03", "2020-01-06"]
+    assert returns == [1.5, -0.5]
+
+
+def test_parse_pnl_response_skips_malformed():
+    data = {"records": [["2020-01-02", 0.0], ["2020-01-03", None], "junk", ["2020-01-06", 2.0]]}
+    dates, returns = parse_pnl_response(data)
+    assert dates == ["2020-01-06"]
+    assert returns == [2.0]
