@@ -354,6 +354,44 @@ def diversity(
     asyncio.run(_run())
 
 
+@app.command(name="screen-corr")
+def screen_corr(
+    scope: str = typer.Option("candidates", "--scope",
+                              help="candidates | high | all"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """用 PnL 相关性筛重复：命中硬 gate 的写本地 SELF_CORRELATION FAIL
+    （自动踢出可提交列表 + 拉黑骨架 + refine 跳过）。"""
+    _setup_logging(verbose)
+    from .engine.correlation import CorrelationScreener
+
+    async def _run():
+        orch = Orchestrator()
+        try:
+            await orch.initialize()
+            if scope == "high":
+                rows = await orch.db.list_high_quality_alphas(min_fitness=0.0)
+                ids = [r["id"] for r in rows]
+            elif scope == "all":
+                cand = await orch.db.list_refine_candidates(limit=300)
+                hi = await orch.db.list_high_quality_alphas(min_fitness=0.0)
+                ids = list({*(c["alpha_id"] for c in cand), *(r["id"] for r in hi)})
+            else:  # candidates
+                cand = await orch.db.list_refine_candidates(limit=300)
+                ids = [c["alpha_id"] for c in cand]
+            screener = CorrelationScreener(orch.db, orch.wq, orch.settings)
+            verdicts = await screener.screen(ids)
+            hard = [v for v in verdicts if v.hard_redundant]
+            console.print(f"Screened [cyan]{len(verdicts)}[/cyan] alphas; "
+                          f"[red]{len(hard)}[/red] hard-redundant (marked SELF_CORRELATION FAIL)")
+            for v in hard:
+                console.print(f"  #{v.alpha_id} corr={v.hard_corr:.3f} vs #{v.hard_ref_id}")
+        finally:
+            await orch.close()
+
+    asyncio.run(_run())
+
+
 @app.command()
 def submittable(
     min_fitness: float = typer.Option(1.0, "--min-fitness", help="Minimum fitness to show"),
