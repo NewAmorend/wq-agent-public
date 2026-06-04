@@ -128,7 +128,9 @@ class BacktestEngine:
             logger.error(f"Backtest exception for alpha {alpha.id}: {e}")
             await self.db.update_alpha_status(alpha.id, AlphaStatus.FAILED)
             return None
-        if result and result.grade != QualityGrade.REJECT:
+        if result and result.grade == QualityGrade.HIGH:
+            await self.db.update_alpha_status(alpha.id, AlphaStatus.HIGH_QUALITY)
+        elif result and result.grade != QualityGrade.REJECT:
             await self.db.update_alpha_status(alpha.id, AlphaStatus.EVALUATED)
         else:
             await self.db.update_alpha_status(alpha.id, AlphaStatus.FAILED)
@@ -177,9 +179,6 @@ class BacktestEngine:
         grade_str = backtest.grade.value if backtest.grade else "unknown"
         fitness_str = f"{backtest.fitness:.4f}" if backtest.fitness is not None else "N/A"
         logger.info(f"Alpha {alpha_id}: fitness={fitness_str}, grade={grade_str}")
-
-        if backtest.grade == QualityGrade.HIGH:
-            await self.db.update_alpha_status(alpha_id, AlphaStatus.HIGH_QUALITY)
 
         return backtest
 

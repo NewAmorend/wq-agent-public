@@ -16,6 +16,8 @@ class PageType(str, enum.Enum):
     ENTITY = "entity"
     OPERATOR = "operator"
     FIELD = "field"
+    PATTERN = "pattern"
+    RECIPE = "recipe"
     LESSON = "lesson"
     ENTRY = "entry"
 

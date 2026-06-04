@@ -57,3 +57,8 @@ async def test_record_writes_entries_and_lessons(tmp_path: Path):
     entry_text = entry_files[0].read_text(encoding="utf-8")
     assert "fitness" in entry_text
     assert "[[ts_delta]]" in entry_text or "[[ts_zscore]]" in entry_text
+    assert "[[close]]" not in entry_text
+    assert "[[volume]]" not in entry_text
+    assert "`close`" in entry_text or "`volume`" in entry_text
+    assert "[[concepts]]" not in lesson_text
+    assert "[[operators]]" not in lesson_text

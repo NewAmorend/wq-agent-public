@@ -44,17 +44,30 @@ class WikiStore:
         return pages, errors
 
     def find_broken_links(self, pages: list[Page]) -> list[tuple[Page, list[str]]]:
-        slug_set = {p.slug for p in pages}
-        title_set = {p.title for p in pages}
+        targets = self._link_targets(pages)
         broken: list[tuple[Page, list[str]]] = []
         for p in pages:
-            misses = [
-                link for link in p.wikilinks
-                if link not in slug_set and link not in title_set
-            ]
+            misses = [link for link in p.wikilinks if _normalize_link(link) not in targets]
             if misses:
                 broken.append((p, misses))
         return broken
+
+    def _link_targets(self, pages: list[Page]) -> set[str]:
+        targets: set[str] = set()
+        for p in pages:
+            rel = p.path
+            try:
+                rel = p.path.relative_to(self.root)
+            except ValueError:
+                pass
+            rel_s = _normalize_link(str(rel))
+            targets.update({
+                _normalize_link(p.slug),
+                _normalize_link(p.title),
+                rel_s,
+                rel_s.removesuffix(".md"),
+            })
+        return targets
 
     def dictionary_path(self) -> Path:
         return self.root / "dictionary" / "base.txt"
@@ -67,3 +80,10 @@ class WikiStore:
 
     def graph_index_path(self) -> Path:
         return self.root / "graph_index.json"
+
+
+def _normalize_link(link: str) -> str:
+    text = str(link).strip().replace("\\", "/")
+    if text.endswith(".md"):
+        text = text[:-3]
+    return text

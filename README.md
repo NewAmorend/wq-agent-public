@@ -125,7 +125,8 @@ templates/
 └── alpha_templates.yaml
 wiki/                   # 知识内容（人写 + 自动写）
 ├── SCHEMA.md
-├── concepts/  operators/  fields/  entries/  lessons/
+├── concepts/  operators/  fields/  patterns/  recipes/
+├── entries/   lessons/   bench/
 └── dictionary/
     ├── base.txt
     └── synonyms.yaml
@@ -133,13 +134,13 @@ wiki/                   # 知识内容（人写 + 自动写）
 
 ## Quant Wiki（三通道混合检索）
 
-参考 [cnblogs.com/jtuki/p/19861920](https://www.cnblogs.com/jtuki/p/19861920) 的 AI Agent 结构化知识层架构，给 alpha 生成提供领域知识 + 历史教训。架构：
+参考 [cnblogs.com/jtuki/p/19861920](https://www.cnblogs.com/jtuki/p/19861920) 的 AI Agent 结构化知识层架构，给 alpha 生成提供领域知识 + 历史教训。当前内容层分为 `concepts/`（理论）、`fields/`（字段语义）、`patterns/`（失败模式）、`recipes/`（构造手册）、`entries/lessons/`（自动沉淀）。架构：
 
 - **存储**：`wiki/` 下的 markdown，YAML frontmatter + `[[wikilinks]]`，规范见 [wiki/SCHEMA.md](wiki/SCHEMA.md)
-- **词法通道**：FMM 分词（`wiki/dictionary/base.txt` + `synonyms.yaml`）+ ripgrep + IDF/Coverage 评分，纯 `0.6 * 加权 IDF 覆盖率 + 0.25 * 原始词条覆盖率`（上限 0.85）
+- **词法通道**：FMM 分词（`wiki/dictionary/base.txt` + `synonyms.yaml`）+ 页面正文/slug/tags/frontmatter 元数据 + IDF/Coverage 评分，纯 `0.6 * 加权 IDF 覆盖率 + 0.25 * 原始词条覆盖率`（上限 0.85）
 - **向量通道**：sqlite-vec 表 + Volcengine / zhipu Embedding，余弦排名
 - **图通道**：NetworkX 构建 wikilink + 共享标签 + 共享来源边，Louvain 社区检测 + PageRank，邻居扩展
-- **融合**：所有原始词条命中 → priority 置顶；其余走加权 RRF（`k=60, grep:vec=7:3`）+ 图扩展
+- **融合**：所有原始词条命中或明确命中页面身份（slug/path/operator_name/field_id/dataset_id）→ priority；其余走加权 RRF（`k=60, grep:vec=7:3`）+ 图扩展
 
 ### 使用
 
@@ -150,6 +151,22 @@ wq-agent wiki index --incremental  # 仅 hash 变化的页重新嵌入
 
 # 调试检索
 wq-agent wiki search "动量 反转" -k 5
+
+# 离线评估检索质量（默认读取 wiki/bench/retrieval_golden.yml）
+wq-agent wiki eval --top-k 5
+
+# 开发回归门：低于阈值会以 exit code 2 失败
+wq-agent wiki eval --top-k 5 --min-hit-at-k 0.8 --min-mrr 0.6
+
+# 输出 JSON，便于 CI 或脚本记录趋势
+wq-agent wiki eval --top-k 5 --json
+
+# 知识库管理员 sub-agent：审查断链、TODO、lesson 归并、bench 覆盖
+wq-agent wiki curate
+wq-agent wiki curate --since 2026-06-01 --json
+
+# 只应用低风险动作：补 retrieval bench 覆盖 + 写 curation_report.json
+wq-agent wiki curate --apply
 
 # 看统计
 wq-agent wiki stats
@@ -170,8 +187,8 @@ wq-agent wiki import-wq
 # 覆盖 region / 限制字段数
 wq-agent wiki import-wq --region CHN --universe TOP2000 --limit-per-dataset 100
 
-# 只拉 operators + datasets，跳过几千条 fields
-wq-agent wiki import-wq --skip-fields
+# 默认只拉 operators + datasets，跳过几千条 field 页；如需字段页再加 --with-fields
+wq-agent wiki import-wq
 ```
 
 importer 写入的页都带 `<!-- managed by wq-agent wiki import-wq -->` 标记，**重跑只覆盖标记还在的页**，你手改过的不动。

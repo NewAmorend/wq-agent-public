@@ -8,6 +8,7 @@ from loguru import logger
 
 from ..models import WQDataField, WQOperator
 from ..llm.base import BaseLLMProvider
+from ..engine.fast_expr import known_functions, validate_fast_expr
 from .base import BaseAlphaGenerator
 
 if TYPE_CHECKING:
@@ -237,20 +238,20 @@ _WRAPPER_POOL_MEASURED = [
     "`ts_decay_linear(rank(<signal>), 5)` — 实测 Fitness ~2.86（VWAP 偏离类）",
     "`-1 * rank(ts_zscore(<signal>, 63))` — 实测 Fitness ~1.26-1.70（估值/基本面类）",
     "`rank(ts_rank(<signal>, 40))` — 实测 Fitness ~1.42-1.58（动量类，双重排名）",
-    "`-ts_av_diff(<signal>, 50) * ts_corr(<signal>, volume, 50)` — 实测 Fitness ~1.70",
+    "`-ts_av_diff(<signal>, 50) * ts_corr(<signal>, <liquidity_field>, 50)` — 实测 Fitness ~1.70",
     "`ts_decay_linear(group_neutralize(rank(<signal>), subindustry), 10)` — 行业中性化后平滑",
 ]
 _WRAPPER_POOL_TURNOVER = [
-    "`trade_when(ts_std(returns,20) < 0.03, rank(<signal>), 0)` — 最强降换手算子",
+    "`trade_when(ts_std_dev(<liquidity_or_price_field>, 20) < 0.03, rank(<signal>), 0)` — 最强降换手算子",
     "`hump(rank(<signal>), hump=0.05)` — 限制日内变化幅度",
     "`ts_target_tvr_decay(rank(<signal>), target_tvr=0.1)` — 直接定 target 换手率",
 ]
 _WRAPPER_POOL_VARIETY = [
     "`group_rank(ts_delta(<signal>, 20), subindustry)` — 行业内排名差分（横截面反转，非 decay 系）",
-    "`zscore(ts_regression(<signal>, returns, 60, rettype=2))` — 残差类（剥离市场成分）",
+    "`zscore(ts_regression(<signal>, <market_or_style_field>, 60, rettype=2))` — 残差类（剥离市场成分）",
     "`signed_power(rank(<signal>) - 0.5, 0.5)` — 非线性压缩极端排名",
     "`ts_zscore(<signal>, 20) - ts_zscore(<signal>, 120)` — 快慢窗口之差（多周期动量）",
-    "`vector_neut(rank(<signal>), rank(volume))` — 对成交量向量中性化",
+    "`vector_neut(rank(<signal>), rank(<liquidity_field>))` — 对流动性信号中性化",
 ]
 
 
@@ -284,7 +285,7 @@ def build_proven_wrappers_section(rng: "random.Random | None" = None) -> str:
         "",
         "### 关键观察",
         "1. **`ts_decay_linear` 是广谱 sharpe 提升器**，但库里已经很多——优先试别的外壳保持多样性",
-        "2. **`trade_when` + `ts_std(returns)` 阈值**是 turnover 杀手，能从 60% 降到 20%",
+        "2. **`trade_when` + `ts_std_dev(低波动/流动性字段)` 阈值**是 turnover 杀手，能从 60% 降到 20%",
         "3. **`-1 * rank(ts_zscore(_, 63))`** 对所有\"水平类\"因子（pe、roe、cap 等）都好用",
         "4. 切忌嵌套 5 层以上——wrapper 加一层就行，加两层会把信号磨平",
         "",
@@ -393,7 +394,8 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
 
         content = await self.llm.generate(prompt, temperature=self.temperature)
         raw_expressions = self._parse_response(content)
-        cleaned = self._clean_expressions(raw_expressions)
+        field_ids = {f.id for f in data_fields}
+        cleaned = self._clean_expressions(raw_expressions, valid_field_ids=field_ids)
         # 兜底过滤：即使 prompt 里说了"不要做同款"，LLM 还是可能造出同骨架的，
         # 这里二次过滤——骨架命中"已存在"集合就丢掉，避免浪费回测。
         #   submitted_skeletons     : 已提交 + self_corr FAIL（也在 prompt 里展示给 LLM）
@@ -743,40 +745,18 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
                 depth = max(depth - 1, 0)
         return max_depth
 
-    def _clean_expressions(self, ideas: list[str], max_depth: int | None = None) -> list[str]:
+    def _clean_expressions(
+        self,
+        ideas: list[str],
+        max_depth: int | None = None,
+        valid_field_ids: set[str] | None = None,
+    ) -> list[str]:
         # max_depth=None 时用类常量 MAX_NESTING_DEPTH（默认 4）；refine 可以传 6 给已经
         # 复杂的 base 留出叠 wrapper 的余地。
         depth_cap = max_depth if max_depth is not None else self.MAX_NESTING_DEPTH
         cleaned: list[str] = []
         rejected_complexity = 0
-        valid_funcs = {
-            "ts_mean", "divide", "subtract", "add", "multiply", "zscore",
-            "ts_rank", "ts_std_dev", "rank", "log", "sqrt", "ts_sum", "ts_min", "ts_max",
-            "ts_median", "ts_correlation", "ts_corr", "ts_covariance", "ts_regression",
-            "ts_decay_linear", "ts_argmax", "ts_argmin", "ts_product", "ts_skew",
-            "ts_kurtosis", "ts_entropy", "scale", "scale_standardize", "scale_normalize",
-            "rank_corr", "rank_kendall", "rank_percentile", "correlation", "covariance",
-            "regression", "min", "max", "median", "abs", "inverse", "sign", "power",
-            "signed_power", "reverse", "ts_delta", "ts_delay", "ts_zscore", "ts_scale",
-            "ts_quantile", "ts_av_diff", "ts_backfill", "ts_count_nans", "ts_arg_max",
-            "ts_arg_min", "ts_step", "normalize", "quantile", "scale_down", "vector_neut",
-            "winsorize", "group_neutralize", "group_rank", "group_zscore", "group_mean",
-            "group_min", "group_max", "group_scale", "group_backfill",
-            # 之前漏掉的 WQ 算子（prompt 里推荐 LLM 用，但 validator 不认会误丢）：
-            # 逻辑 / 条件
-            "and", "or", "not", "is_nan", "if_else", "to_nan", "trade_when",
-            # 时序 / 控换手
-            "hump", "jump_decay", "days_from_last_change", "kth_element",
-            "last_diff_value", "ts_target_tvr_decay",
-            # 分组 / 向量 / 归约
-            "densify", "bucket", "combo_a", "generate_stats", "self_corr",
-            "group_cartesian_product",
-            "vec_avg", "vec_max", "vec_min", "vec_sum",
-            "reduce_avg", "reduce_choose", "reduce_count", "reduce_ir", "reduce_kurtosis",
-            "reduce_max", "reduce_min", "reduce_norm", "reduce_percentage",
-            "reduce_powersum", "reduce_range", "reduce_skewness", "reduce_stddev",
-            "reduce_sum",
-        }
+        valid_funcs = known_functions()
         # 用整词匹配——之前用 substring 匹配 "is" 会误杀 is_nan 算子，"the"/"are" 也会
         # 命中很多合法字段名（如 fnd*_assets 含 "are"... 实际是反过来其它字段含子串）。
         # 整词匹配只在真正出现 "the/is/are/it" 等英文散字时才丢。
@@ -790,6 +770,7 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
             "no_func_no_arith": 0,
             "missing_parens": 0,
             "nesting_too_deep": 0,
+            "fast_expr_invalid": 0,
         }
 
         for idea in ideas:
@@ -813,6 +794,16 @@ class LLMAlphaGenerator(BaseAlphaGenerator):
             if self._nesting_depth(fixed) > depth_cap:
                 reject_counts["nesting_too_deep"] += 1
                 rejected_complexity += 1
+                continue
+            validation = validate_fast_expr(
+                fixed,
+                field_ids=valid_field_ids,
+                max_depth=depth_cap,
+            )
+            if not validation.valid:
+                reject_counts["fast_expr_invalid"] += 1
+                reason = "; ".join(issue.message for issue in validation.issues[:3])
+                logger.debug(f"Rejected (FastExpr validation): {reason}; expr={fixed[:100]}")
                 continue
             cleaned.append(fixed)
 

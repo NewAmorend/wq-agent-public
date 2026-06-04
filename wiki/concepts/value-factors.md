@@ -48,7 +48,7 @@ rank(divide(cashflow_op, enterprise_value))
 
 - 不要直接除（`close / bookvalue_ps`）—— 价格量纲让大盘股主导。**必须 rank 或 zscore**
 - `eps` 在亏损公司是负数，rank 后正常但绝对值除会反号 → 用 `divide(eps, close)` 再 rank
-- 单纯 P/E 在熊市跑赢、牛市跑输 → **配 [[quality-factors]] 或 [[momentum-factors]] 做对冲**
+- 单纯 P/E 在熊市跑赢、牛市跑输 → **配 [[quality-factors]] 或 [[momentum|momentum factors]] 做对冲**
 - HML 在 FF5 加入 RMW/CMA 后变得"多余"——价值需要质量护身
 
 ## 参考论文

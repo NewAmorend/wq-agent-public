@@ -13,7 +13,7 @@ created: 2026-05-22
 
 - 把高频信号平滑成持仓友好型，降低 turnover
 - 替代 `ts_mean` 作为更"看重近期"的均值
-- 经常出现在 [[momentum]] 与 [[reversal]] 的最外层做平滑
+- 经常出现在 [[momentum]] 与 [[momentum-reversal-pv|reversal]] 的最外层做平滑
 
 ## 参数经验
 

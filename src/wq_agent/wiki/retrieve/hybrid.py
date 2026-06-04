@@ -45,8 +45,8 @@ class HybridRetriever:
         grep_hits = self.grep.search(query, top_k=pool)
         vector_hits = await self.vector.search(query, top_k=pool)
 
-        priority = [h for h in grep_hits if h.matched_all_originals]
-        normal_grep = [h for h in grep_hits if not h.matched_all_originals]
+        priority = [h for h in grep_hits if h.matched_all_originals or h.matched_identifier]
+        normal_grep = [h for h in grep_hits if h not in priority]
 
         seen: dict[str, HybridHit] = {}
 

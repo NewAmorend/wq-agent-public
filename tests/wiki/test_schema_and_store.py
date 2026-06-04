@@ -41,3 +41,14 @@ def test_store_finds_broken_links(wiki_root: Path):
     pages, _ = store.load_pages()
     broken = store.find_broken_links(pages)
     assert any("不存在的页" in misses for _, misses in broken)
+
+
+def test_store_resolves_path_style_wikilinks(wiki_root: Path):
+    (wiki_root / "concepts/path_link.md").write_text(
+        "---\ntitle: path link\ntype: concept\ntags: [test]\ncreated: 2026-05-22\n---\n\n看 [[operators/ts_delta]]。\n",
+        encoding="utf-8",
+    )
+    store = WikiStore(wiki_root)
+    pages, _ = store.load_pages()
+    broken = store.find_broken_links(pages)
+    assert not any("operators/ts_delta" in misses for _, misses in broken)

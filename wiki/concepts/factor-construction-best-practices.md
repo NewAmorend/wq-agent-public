@@ -64,7 +64,7 @@ add(rank(eps_growth), rank(returns_60d))
 | 波动率 | 252+ |
 | 基本面 | 60-252 |
 
-## 7. WQ 提交 checklist（[[2026-05-23-evaluator-cutoffs]] 同源）
+## 7. WQ 提交 checklist（[[factor-construction-best-practices|WQ 提交 checklist]] 同源）
 
 - [ ] Fitness ≥ 1.0
 - [ ] Sharpe ≥ 1.25

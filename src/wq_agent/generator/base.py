@@ -17,5 +17,7 @@ class BaseAlphaGenerator(ABC):
         forbidden_fields: list[dict[str, Any]] | None = None,
         high_fitness_exemplars: list[dict[str, Any]] | None = None,
         submitted_skeletons: set[str] | None = None,
+        extra_exclude_skeletons: set[str] | None = None,
+        family_distribution: dict[str, Any] | None = None,
     ) -> list[str]:
         ...

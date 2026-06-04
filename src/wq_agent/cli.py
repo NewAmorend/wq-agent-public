@@ -434,8 +434,8 @@ def submittable(
                     r["wq_alpha_id"] or "—",
                 )
             console.print(table)
-            console.print(f"\n[dim]Tip: run [bold]wq-agent submit <ID>[/bold] to mark as submitted, "
-                          f"or [bold]wq-agent sync-submitted[/bold] to pull real status from WQ Brain.[/dim]")
+            console.print("\n[dim]Tip: run [bold]wq-agent submit <ID>[/bold] to mark as submitted, "
+                          "or [bold]wq-agent sync-submitted[/bold] to pull real status from WQ Brain.[/dim]")
         finally:
             await db.close()
 
@@ -729,6 +729,180 @@ def wiki_search(
             await db.close()
 
     asyncio.run(_run())
+
+
+@wiki_app.command("eval")
+def wiki_eval(
+    top_k: int = typer.Option(5, "--top-k", "-k", help="Evaluate hit@k / MRR at this cutoff"),
+    golden: Optional[str] = typer.Option(None, "--golden", help="Optional YAML golden-query file"),
+    min_hit_at_k: Optional[float] = typer.Option(None, "--min-hit-at-k", help="Fail if hit@k is below this value (0-1)"),
+    min_mrr: Optional[float] = typer.Option(None, "--min-mrr", help="Fail if MRR is below this value (0-1)"),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Evaluate wiki retrieval quality against golden queries."""
+    _setup_logging(verbose)
+    from .wiki.store import WikiStore
+    from .wiki.index import WikiIndex
+    from .wiki.embeddings import make_embedding_provider
+    from .wiki.eval import evaluate_retriever, load_golden_queries
+    from .db import Database
+    from pathlib import Path
+
+    async def _run():
+        settings = get_settings()
+        store = WikiStore(settings.WIKI_DIR)
+        if not store.exists():
+            console.print(f"[yellow]Wiki dir not found at {settings.WIKI_DIR}[/yellow]")
+            raise typer.Exit(1)
+        default_bench = Path(settings.WIKI_DIR) / "bench" / "retrieval_golden.yml"
+        golden_path = golden or (str(default_bench) if default_bench.exists() else None)
+        queries = load_golden_queries(golden_path)
+        db = Database(settings.DB_PATH)
+        await db.connect()
+        embedder = make_embedding_provider(settings)
+        index = WikiIndex(
+            store=store,
+            db=db,
+            embedder=embedder,
+            grep_weight=settings.WIKI_GREP_WEIGHT,
+            vector_weight=settings.WIKI_VECTOR_WEIGHT,
+        )
+        try:
+            stats = await index.build(incremental=True)
+            retriever = index.retriever
+            if retriever is None:
+                console.print("[yellow]Retriever unavailable[/yellow]")
+                raise typer.Exit(1)
+            report = await evaluate_retriever(retriever, queries, top_k=top_k)
+            failed_thresholds: list[str] = []
+            if min_hit_at_k is not None and report.hit_at_k < min_hit_at_k:
+                failed_thresholds.append(f"hit@{top_k} {report.hit_at_k:.3f} < {min_hit_at_k:.3f}")
+            if min_mrr is not None and report.mrr < min_mrr:
+                failed_thresholds.append(f"MRR {report.mrr:.3f} < {min_mrr:.3f}")
+
+            if json_output:
+                console.print(report.to_json())
+                if failed_thresholds:
+                    raise typer.Exit(2)
+                return
+
+            summary = Table(title=f"Wiki Retrieval Eval ({report.n_queries} queries @ top-{top_k})")
+            summary.add_column("Metric", style="cyan")
+            summary.add_column("Value", justify="right")
+            summary.add_row("hit@1", f"{report.hit_at_1:.1%}")
+            summary.add_row(f"hit@{top_k}", f"{report.hit_at_k:.1%}")
+            summary.add_row("MRR", f"{report.mrr:.3f}")
+            summary.add_row("pages", str(stats.pages))
+            summary.add_row("embeddings", str(stats.embeddings))
+            summary.add_row("sources", ", ".join(f"{k}:{v}" for k, v in sorted(report.source_counts.items())) or "—")
+            console.print(summary)
+
+            details = Table(title="Golden Query Details")
+            details.add_column("#", justify="right", style="dim")
+            details.add_column("Query", max_width=38)
+            details.add_column("Best", justify="right")
+            details.add_column("Top hit", max_width=30)
+            details.add_column("Expected", max_width=40)
+            for i, row in enumerate(report.results, 1):
+                top = row.top_hits[0] if row.top_hits else {}
+                best = str(row.best_rank) if row.best_rank is not None else "MISS"
+                details.add_row(
+                    str(i),
+                    row.query,
+                    best,
+                    str(top.get("title", "—")),
+                    ", ".join(row.expected[:3]),
+                )
+            console.print(details)
+
+            if report.misses:
+                console.print("[yellow]Misses:[/yellow]")
+                for miss in report.misses:
+                    got = ", ".join(str(h.get("title")) for h in miss.top_hits[:3]) or "no hits"
+                    console.print(f"  - {miss.query}: got {got}")
+            if failed_thresholds:
+                console.print("[red]Benchmark thresholds failed:[/red] " + "; ".join(failed_thresholds))
+                raise typer.Exit(2)
+        finally:
+            await embedder.close()
+            await db.close()
+
+    asyncio.run(_run())
+
+
+@wiki_app.command("curate")
+def wiki_curate(
+    apply: bool = typer.Option(False, "--apply", help="Apply low-risk curator actions"),
+    since: Optional[str] = typer.Option(None, "--since", help="Only consider lessons since YYYY-MM-DD for rollup suggestions"),
+    max_suggestions: int = typer.Option(30, "--max-suggestions", help="Maximum suggestions to show"),
+    max_bench_additions: int = typer.Option(20, "--max-bench-additions", help="Maximum bench queries to append with --apply"),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Run the knowledge-curator sub-agent over the wiki."""
+    _setup_logging(verbose)
+    from .wiki.curator import KnowledgeCurator, parse_since
+    from .wiki.store import WikiStore
+
+    settings = get_settings()
+    store = WikiStore(settings.WIKI_DIR)
+    if not store.exists():
+        console.print(f"[yellow]Wiki dir not found at {settings.WIKI_DIR}[/yellow]")
+        raise typer.Exit(1)
+
+    try:
+        since_date = parse_since(since)
+    except ValueError:
+        console.print("[red]--since must be YYYY-MM-DD[/red]")
+        raise typer.Exit(1)
+
+    curator = KnowledgeCurator(store)
+    report = curator.audit(since=since_date, max_suggestions=max_suggestions)
+    if apply:
+        report = curator.apply(report, max_bench_additions=max_bench_additions)
+
+    if json_output:
+        console.print(report.to_json())
+        return
+
+    summary = Table(title="Wiki Curator Report")
+    summary.add_column("Metric", style="cyan")
+    summary.add_column("Value", justify="right")
+    summary.add_row("pages", str(report.pages))
+    summary.add_row("parse errors", str(report.errors))
+    summary.add_row("broken links", str(report.broken_links))
+    summary.add_row("findings", str(len(report.findings)))
+    summary.add_row("suggestions", str(len(report.suggestions)))
+    summary.add_row("applyable", str(len(report.applyable_suggestions)))
+    console.print(summary)
+
+    if report.findings:
+        findings = Table(title="Findings")
+        findings.add_column("Severity", style="yellow")
+        findings.add_column("Category")
+        findings.add_column("Path", max_width=36)
+        findings.add_column("Message", max_width=48)
+        for row in report.findings[:20]:
+            findings.add_row(row.severity, row.category, row.path or "—", row.message)
+        console.print(findings)
+
+    if report.suggestions:
+        suggestions = Table(title="Suggestions")
+        suggestions.add_column("Action", style="cyan")
+        suggestions.add_column("Target", max_width=34)
+        suggestions.add_column("Apply", justify="center")
+        suggestions.add_column("Reason", max_width=58)
+        for row in report.suggestions[:max_suggestions]:
+            suggestions.add_row(row.action, row.target, "yes" if row.applyable else "no", row.reason)
+        console.print(suggestions)
+
+    if report.applied:
+        console.print("[green]Applied:[/green]")
+        for item in report.applied:
+            console.print(f"  - {item}")
+    elif report.applyable_suggestions:
+        console.print("[dim]Run with --apply to append deterministic bench coverage suggestions.[/dim]")
 
 
 @wiki_app.command("import-wq")

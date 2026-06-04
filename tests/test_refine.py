@@ -145,5 +145,7 @@ async def test_refine_generator_handles_empty_failed_checks():
     llm.generate = _gen
     refiner = RefineAlphaGenerator(llm=llm)
     base = {"alpha_id": 1, "expression": "ts_delta(close, 5)", "fitness": 0.95, "failed_checks": []}
-    variants = await refiner.refine(base, [WQDataField(id="close")], [], count=3)
+    variants = await refiner.refine(
+        base, [WQDataField(id="close"), WQDataField(id="volume")], [], count=3
+    )
     assert len(variants) == 1

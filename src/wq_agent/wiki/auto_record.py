@@ -72,7 +72,7 @@ class AutoRecorder:
             return False
         funcs, fields = self._extract_symbols(rec.expression)
         tags = self._infer_tags(funcs, fields, res)
-        sources_section = self._render_links(funcs + fields)
+        sources_section = self._render_symbols(funcs, fields)
         body = f"""# Alpha #{rec.id}
 
 **表达式**：
@@ -163,7 +163,7 @@ class AutoRecorder:
 
 ## 建议（待人工归纳）
 
-- TODO：把以上模式整理进 [[concepts]] 或 [[operators]] 对应页
+- TODO：把以上模式整理进 concepts/ 或 operators/ 下的对应页
 """
         front = self._frontmatter(
             title=f"Batch lessons {today} #{seq}",
@@ -206,10 +206,11 @@ class AutoRecorder:
         return tags
 
     @staticmethod
-    def _render_links(symbols: list[str]) -> str:
-        if not symbols:
-            return "（解析为空）"
-        return ", ".join(f"[[{s}]]" for s in symbols[:16])
+    def _render_symbols(funcs: list[str], fields: list[str]) -> str:
+        parts: list[str] = []
+        parts.extend(f"[[{s}]]" for s in funcs[:8])
+        parts.extend(f"`{s}`" for s in fields[:8])
+        return ", ".join(parts) if parts else "（解析为空）"
 
     @staticmethod
     def _frontmatter(title: str, type_: str, tags: list[str], extra: dict) -> str:

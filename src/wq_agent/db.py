@@ -380,6 +380,10 @@ class Database:
                       b.returns, b.grade, b.checks, b.created_at
                FROM alphas a
                JOIN backtest_results b ON a.id = b.alpha_id
+                 AND b.created_at = (
+                     SELECT MAX(b2.created_at) FROM backtest_results b2
+                     WHERE b2.alpha_id = a.id
+                 )
                WHERE b.fitness IS NOT NULL
                  AND (b.grade = 'medium' OR (b.grade = 'low' AND b.fitness >= ?))
                ORDER BY
@@ -420,6 +424,10 @@ class Database:
             """SELECT a.*, b.sharpe, b.turnover, b.fitness, b.returns, b.drawdown, b.grade, b.wq_alpha_id
                FROM alphas a
                JOIN backtest_results b ON a.id = b.alpha_id
+                 AND b.created_at = (
+                     SELECT MAX(b2.created_at) FROM backtest_results b2
+                     WHERE b2.alpha_id = a.id
+                 )
                WHERE b.fitness >= ?
                ORDER BY b.fitness DESC""",
             (min_fitness,),
@@ -533,6 +541,10 @@ class Database:
                       b.wq_alpha_id, b.checks
                FROM alphas a
                JOIN backtest_results b ON a.id = b.alpha_id
+                 AND b.created_at = (
+                     SELECT MAX(b2.created_at) FROM backtest_results b2
+                     WHERE b2.alpha_id = a.id
+                 )
                WHERE a.status != ?
                  AND b.grade = 'high'
                  AND b.fitness >= ?
@@ -584,6 +596,10 @@ class Database:
                       b.fitness, b.sharpe, b.turnover, b.wq_alpha_id
                FROM alphas a
                LEFT JOIN backtest_results b ON a.id = b.alpha_id
+                 AND b.created_at = (
+                     SELECT MAX(b2.created_at) FROM backtest_results b2
+                     WHERE b2.alpha_id = a.id
+                 )
                WHERE a.status = ?
                ORDER BY a.submitted_at DESC NULLS LAST
                LIMIT ?""",
@@ -821,7 +837,7 @@ class Database:
         """
         assert self._conn is not None
         cursor = await self._conn.execute(
-            "SELECT alpha_id FROM backtest_results WHERE wq_alpha_id = ?",
+            "SELECT DISTINCT alpha_id FROM backtest_results WHERE wq_alpha_id = ?",
             (wq_alpha_id,),
         )
         rows = await cursor.fetchall()
@@ -893,7 +909,15 @@ class Database:
             )
             row = await cursor.fetchone()
             stats[status.value] = row["cnt"]
-        cursor = await self._conn.execute("SELECT COUNT(*) as cnt FROM backtest_results WHERE fitness >= 1.0")
+        cursor = await self._conn.execute(
+            """SELECT COUNT(*) as cnt
+               FROM backtest_results b
+               WHERE b.fitness >= 1.0
+                 AND b.created_at = (
+                     SELECT MAX(b2.created_at) FROM backtest_results b2
+                     WHERE b2.alpha_id = b.alpha_id
+                 )"""
+        )
         row = await cursor.fetchone()
         stats["high_quality_count"] = row["cnt"]
         return stats

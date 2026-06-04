@@ -37,6 +37,8 @@ class TemplateAlphaGenerator(BaseAlphaGenerator):
         forbidden_fields: list[dict[str, Any]] | None = None,
         high_fitness_exemplars: list[dict[str, Any]] | None = None,
         submitted_skeletons: set[str] | None = None,
+        extra_exclude_skeletons: set[str] | None = None,
+        family_distribution: dict[str, Any] | None = None,
     ) -> list[str]:
         selected_fields = random.sample(data_fields, min(self.max_fields, len(data_fields)))
         expressions: list[str] = []

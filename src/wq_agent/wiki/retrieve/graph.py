@@ -38,6 +38,12 @@ class GraphChannel:
         self.pages = pages
         self.pages_by_slug: dict[str, Page] = {p.slug: p for p in pages}
         self.pages_by_title: dict[str, Page] = {p.title: p for p in pages}
+        self.pages_by_rel_path: dict[str, Page] = {}
+        for p in pages:
+            rel = str(p.path).replace("\\", "/")
+            self.pages_by_rel_path[rel.removesuffix(".md")] = p
+            if "/wiki/" in rel:
+                self.pages_by_rel_path[rel.split("/wiki/", 1)[1].removesuffix(".md")] = p
         self.graph = self._build_graph(pages)
         self.pagerank: dict[str, float] = {}
         self.communities: dict[str, int] = {}
@@ -62,7 +68,8 @@ class GraphChannel:
             logger.info(f"Skipping Louvain: {n} nodes > {self.MAX_NODES_FOR_LOUVAIN}")
 
     def _resolve(self, name: str) -> Page | None:
-        return self.pages_by_slug.get(name) or self.pages_by_title.get(name)
+        key = str(name).strip().replace("\\", "/").removesuffix(".md")
+        return self.pages_by_slug.get(key) or self.pages_by_title.get(name) or self.pages_by_rel_path.get(key)
 
     def _build_graph(self, pages: list[Page]) -> nx.DiGraph:
         g = nx.DiGraph()
@@ -174,7 +181,7 @@ class GraphChannel:
         for slug, votes in ranked[:k]:
             page = self.pages_by_slug.get(slug)
             if page:
-                hits.append(GraphHit(page=page, score=votes * 0.1, reason=reasons[slug]))
+                hits.append(GraphHit(page=page, score=votes * 0.03, reason=reasons[slug]))
         return hits
 
     def to_json(self) -> dict:

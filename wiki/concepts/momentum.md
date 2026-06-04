@@ -14,11 +14,11 @@ created: 2026-05-22
 - `ts_delta(close_field, d)` — 简单价格变化，`d ∈ [5, 20, 60]`
 - `rank(ts_delta(close_field, d))` — 横截面排名化，降低规模偏差
 - `ts_rank(ts_delta(close_field, d), 252)` — 把当前动量水位放到长窗口里看
-- `divide(ts_delta(x, d), ts_std_dev(x, d))` — 风险调整后的动量（[[risk-adjusted-momentum]]）
+- `divide(ts_delta(x, d), ts_std_dev(x, d))` — 风险调整后的动量（[[factor-construction-best-practices|risk-adjusted momentum]]）
 
 ## 与之常配的技巧
 
-- 与 [[reversal]] 反向叠加，构成"短期反转 + 中期动量"组合
+- 与 [[momentum-reversal-pv|reversal]] 反向叠加，构成"短期反转 + 中期动量"组合
 - 用 [[group_neutralize]] 做行业中性，避开行业 beta
 - 用 [[ts_decay_linear]] 平滑信号，降低换手率
 

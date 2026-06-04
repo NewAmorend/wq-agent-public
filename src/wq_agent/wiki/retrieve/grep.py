@@ -14,6 +14,7 @@ class GrepHit:
     score: float
     matched_originals: set[str]
     matched_all_originals: bool
+    matched_identifier: bool
 
 
 class GrepChannel:
@@ -35,11 +36,43 @@ class GrepChannel:
         self.pages = pages
         self.tokenizer = tokenizer
         self.n_pages = max(len(pages), 1)
-        # 预先 lowercase 一份大文本，搜的时候只做 str.count
-        self._haystack: list[tuple[Page, str]] = [
-            (p, (p.title + "\n" + p.body).lower()) for p in pages
-        ]
+        # 预先 lowercase 一份大文本，搜的时候只做 str.count。title_key 用于
+        # 轻量排序 boost：query 明确命中标题/slug 时，应优先返回该页。
+        self._haystack: list[tuple[Page, str, str, set[str]]] = []
+        for p in pages:
+            identity_key = self._identity_text(p).lower()
+            self._haystack.append(
+                (
+                    p,
+                    (self._metadata_text(p) + "\n" + p.body).lower(),
+                    identity_key,
+                    self._identifier_keys(p),
+                )
+            )
         self.df = df if df is not None else self._build_df(pages)
+
+
+
+    @staticmethod
+    def _identity_text(page: Page) -> str:
+        keys = [page.title, page.slug, str(page.path)]
+        for name in ("operator_name", "field_id", "dataset_id"):
+            value = page.extra.get(name)
+            if isinstance(value, str):
+                keys.append(value)
+        return " ".join(keys)
+
+    @staticmethod
+    def _metadata_text(page: Page) -> str:
+        extra_values: list[str] = []
+        for value in page.extra.values():
+            if isinstance(value, str):
+                extra_values.append(value)
+            elif isinstance(value, (int, float)):
+                extra_values.append(str(value))
+            elif isinstance(value, list):
+                extra_values.extend(str(v) for v in value if isinstance(v, (str, int, float)))
+        return " ".join([page.title, page.slug, str(page.path), *page.tags, *extra_values])
 
     @staticmethod
     def _build_df(pages: list[Page]) -> dict[str, int]:
@@ -47,7 +80,7 @@ class GrepChannel:
         token_re = re.compile(r"[a-z0-9_]+|[一-鿿]+")
         for p in pages:
             seen: set[str] = set()
-            text = (p.title + "\n" + p.body).lower()
+            text = (GrepChannel._metadata_text(p) + "\n" + p.body).lower()
             for word in token_re.findall(text):
                 if word in seen:
                     continue
@@ -61,6 +94,18 @@ class GrepChannel:
         if d == 0:
             return math.log(self.n_pages + 1)
         return math.log(self.n_pages / d)
+
+    @staticmethod
+    def _identifier_keys(page: Page) -> set[str]:
+        keys = {
+            page.slug.lower(),
+            page.path.stem.lower(),
+            str(page.path.with_suffix("")).lower(),
+        }
+        for value in page.extra.values():
+            if isinstance(value, str):
+                keys.add(value.lower())
+        return {k for k in keys if k}
 
     def search(self, query: str, top_k: int = 10) -> list[GrepHit]:
         tokens = self.tokenizer.tokenize(query)
@@ -81,26 +126,37 @@ class GrepChannel:
         idf_cache = {t: self.idf(t) for t, _ in weighted_lc}
 
         hits: list[GrepHit] = []
-        for page, haystack in self._haystack:
+        for page, haystack, title_key, identifier_keys in self._haystack:
             matched_weighted = 0.0
             matched_originals: set[str] = set()
+            title_matches: set[str] = set()
+            matched_identifier = False
             for tok, weight in weighted_lc:
                 if tok and tok in haystack:
                     matched_weighted += idf_cache[tok] * weight
                     if tok in originals_lc:
                         matched_originals.add(tok)
+                        if tok in title_key:
+                            title_matches.add(tok)
+                        if tok in identifier_keys:
+                            matched_identifier = True
             # 命中 0 个 token → 跳过；命中但 IDF=0（query 全是高频词）→ 仍按 coverage 计分
             if not matched_originals:
                 continue
             coverage = len(matched_originals) / original_count
             score = 0.6 * (matched_weighted / denom) + 0.25 * coverage
             score = min(score, self.SCORE_CAP)
+            if title_matches:
+                # Title/slug/path matches are stronger intent signals than body-only hits.
+                # Keep the boost bounded so broad keyword matches still matter.
+                score += min(0.45, 0.15 * len(title_matches))
             hits.append(
                 GrepHit(
                     page=page,
                     score=score,
                     matched_originals=matched_originals,
                     matched_all_originals=len(matched_originals) == original_count,
+                    matched_identifier=matched_identifier or len(title_matches) >= 2,
                 )
             )
 
