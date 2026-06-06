@@ -2,12 +2,12 @@
 
 WorldQuant Alpha 生成与回测 Agent Harness。
 
-通过 LLM（Kimi / DeepSeek）、模板与因子挖掘三种策略批量生成 alpha 表达式，调用 WorldQuant Brain Simulator 进行回测，并按 fitness / Sharpe / turnover / returns 阈值自动评级、入库 SQLite。
+通过 LLM（OpenAI / ChatGPT / OpenAI-compatible API，可切 Kimi / DeepSeek）、模板与因子挖掘三种策略批量生成 alpha 表达式，调用 WorldQuant Brain Simulator 进行回测，并按 fitness / Sharpe / turnover / returns 阈值自动评级、入库 SQLite。
 
 ## 功能特性
 
 - **三种生成策略**
-  - `llm` — 调用 LLM（默认 Kimi `kimi-k2.6`，可切 DeepSeek）生成符合 FastExpr 语法的表达式
+  - `llm` — 调用 LLM（默认 OpenAI-compatible，可切 Kimi / DeepSeek）生成符合 FastExpr 语法的表达式
   - `template` — 基于 `templates/alpha_templates.yaml` 的模板组合
   - `factor_mining` — 因子挖掘式遍历
 - **WQ Brain 客户端**：自动登录、拉取 datafields/operators、并发提交 simulation、轮询结果
@@ -39,13 +39,35 @@ cp .env.example .env
 | 变量 | 说明 |
 | --- | --- |
 | `WQ_USERNAME` / `WQ_PASSWORD` | WorldQuant Brain 账号 |
-| `LLM_PROVIDER` | `kimi` 或 `deepseek` |
-| `KIMI_API_KEY` / `DEEPSEEK_API_KEY` | LLM 服务密钥 |
+| `LLM_PROVIDER` | `openai`、`kimi` 或 `deepseek` |
+| `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` | OpenAI / ChatGPT / OpenAI-compatible API 地址、密钥和模型名 |
+| `OPENAI_WIRE_API` | `auto`、`responses` 或 `chat_completions`；`auto` 优先 Responses，不支持时回退 Chat Completions |
+| `OPENAI_REASONING_EFFORT` / `OPENAI_STORE` | 可选 reasoning effort；默认 `OPENAI_STORE=false` 禁用响应存储 |
+| `OPENAI_ALLOW_INSECURE_HTTP` | 非本地 HTTP 端点默认拒绝；仅信任远程 HTTP 私有端点时设为 `true` |
+| `OPENAI_CHAT_TOKEN_PARAM` / `OPENAI_CHAT_REASONING_EFFORT` | Chat Completions 兼容开关；必要时使用 `max_completion_tokens` 或发送 `reasoning_effort` |
+| `KIMI_API_KEY` / `DEEPSEEK_API_KEY` | Kimi / DeepSeek 服务密钥（仅切换到对应 provider 时需要） |
 | `WQ_REGION` / `WQ_UNIVERSE` / `WQ_DELAY` / `WQ_NEUTRALIZATION` | 回测参数 |
 | `MIN_FITNESS` / `MIN_SHARPE` / `MAX_TURNOVER` / `MIN_RETURNS` | 评级阈值 |
 | `WQ_MAX_CONCURRENT` | Simulation 并发数 |
 | `LLM_GEN_TEMPERATURE` | 主生成采样温度（默认 0.5，调高增大多样性减少重复） |
 | `DEDUP_FITNESS_FLOOR` | 同骨架历史最佳 fitness 始终低于此值则从生成里排除（默认 0.3，0 关闭） |
+
+OpenAI-compatible 示例：
+
+```env
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://127.0.0.1:8080
+OPENAI_API_KEY=your_key
+OPENAI_MODEL=gpt-5.4
+OPENAI_WIRE_API=auto
+OPENAI_REASONING_EFFORT=
+OPENAI_STORE=false
+OPENAI_ALLOW_INSECURE_HTTP=false
+OPENAI_CHAT_TOKEN_PARAM=max_tokens
+OPENAI_CHAT_REASONING_EFFORT=false
+```
+
+`OPENAI_BASE_URL` 可以填官方 `https://api.openai.com/v1`，也可以填本地代理根地址。`OPENAI_WIRE_API=auto` 会先请求 `/v1/responses`，如果代理不支持 Responses API，再自动回退到 `/v1/chat/completions`。为避免密钥明文传输，非本地 `http://` 端点默认拒绝；本地 `localhost` / `127.0.0.1` 代理可直接使用。
 
 ## 使用
 
@@ -108,7 +130,7 @@ src/wq_agent/
 │   ├── llm.py          # 注入 wiki 检索结果到 prompt
 │   ├── template.py
 │   └── factor.py
-├── llm/                # LLM 适配（Kimi / DeepSeek）
+├── llm/                # LLM 适配（OpenAI-compatible / Kimi / DeepSeek）
 ├── wq/                 # WQ Brain 客户端 + 鉴权
 ├── engine/
 │   ├── backtest.py     # Simulation 提交与轮询

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     WQ_PASTEURIZATION: str = "ON"
     WQ_MAX_CONCURRENT: int = 5
 
-    LLM_PROVIDER: str = "kimi"
+    LLM_PROVIDER: str = "openai"
     LLM_MODEL: str = ""
     LLM_MAX_TOKENS: int = 32768
     # 主生成的采样温度。偏低（0.3）易产出同质表达式；调高增大结构/字段多样性，
@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1/chat/completions"
     DEEPSEEK_MODEL: str = "deepseek-chat"
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-5.4"
+    OPENAI_WIRE_API: str = "auto"
+    OPENAI_REASONING_EFFORT: str = ""
+    OPENAI_STORE: bool = False
+    OPENAI_ALLOW_INSECURE_HTTP: bool = False
+    OPENAI_CHAT_TOKEN_PARAM: str = "max_tokens"
+    OPENAI_CHAT_REASONING_EFFORT: bool = False
 
     # WQ Brain 官方提交阈值（USA TOP3000 delay=1，截至 2026-05）。
     # 评估器优先使用 WQ 自带的 checks 列表；下面这组只在 checks 缺失时作为 fallback。

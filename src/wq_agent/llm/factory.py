@@ -3,12 +3,14 @@ from __future__ import annotations
 from .base import BaseLLMProvider
 from .kimi import KimiProvider
 from .deepseek import DeepSeekProvider
+from .openai import OpenAIProvider
 
 
 class LLMFactory:
     _providers: dict[str, type[BaseLLMProvider]] = {
         "kimi": KimiProvider,
         "deepseek": DeepSeekProvider,
+        "openai": OpenAIProvider,
     }
 
     @classmethod
@@ -37,5 +39,18 @@ class LLMFactory:
             return DeepSeekProvider(
                 api_key=settings.DEEPSEEK_API_KEY,
                 base_url=settings.DEEPSEEK_BASE_URL,
+            )
+        elif provider == "openai":
+            return OpenAIProvider(
+                api_key=settings.OPENAI_API_KEY,
+                base_url=settings.OPENAI_BASE_URL,
+                model=model_override or settings.OPENAI_MODEL,
+                wire_api=settings.OPENAI_WIRE_API,
+                reasoning_effort=settings.OPENAI_REASONING_EFFORT,
+                store=settings.OPENAI_STORE,
+                max_tokens=settings.LLM_MAX_TOKENS,
+                allow_insecure_http=settings.OPENAI_ALLOW_INSECURE_HTTP,
+                chat_token_param=settings.OPENAI_CHAT_TOKEN_PARAM,
+                chat_reasoning_effort=settings.OPENAI_CHAT_REASONING_EFFORT,
             )
         raise ValueError(f"Unknown LLM provider in settings: {provider}")
