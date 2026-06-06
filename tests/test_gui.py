@@ -1,0 +1,336 @@
+from __future__ import annotations
+
+import http.client
+import json
+import threading
+import time
+import urllib.error
+import urllib.request
+
+from wq_agent.gui.server import (
+    MASKED_SECRET,
+    MAX_JOB_LOG_LINES,
+    EnvManager,
+    Job,
+    GuiState,
+    JobManager,
+    SAFE_ACTIONS,
+    build_cli_command,
+    _make_handler,
+    _redact,
+    STATIC_DIR,
+)
+from http.server import ThreadingHTTPServer
+
+
+def _start_test_server(tmp_path):
+    state = GuiState(tmp_path, "127.0.0.1", 0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(state))
+    state.port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return state, server, thread
+
+
+def _stop_test_server(server, thread):
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+
+
+def _open(request):
+    return urllib.request.urlopen(request, timeout=5)
+
+
+def test_env_snapshot_initializes_from_example_and_masks_secret(tmp_path):
+    (tmp_path / ".env.example").write_text(
+        "\n".join(
+            [
+                "OPENAI_API_KEY=secret-value",
+                "OPENAI_MODEL=gpt-5.4",
+                "WQ_USERNAME=alice",
+                "WQ_PASSWORD=wq-secret",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manager = EnvManager(tmp_path)
+    snapshot = manager.snapshot()
+    values = {field["key"]: field for field in snapshot["fields"]}
+
+    assert (tmp_path / ".env").exists()
+    assert values["OPENAI_API_KEY"]["value"] == MASKED_SECRET
+    assert values["OPENAI_API_KEY"]["has_value"] is True
+    assert values["OPENAI_MODEL"]["value"] == "gpt-5.4"
+    assert values["WQ_PASSWORD"]["value"] == MASKED_SECRET
+
+
+def test_env_save_preserves_masked_secret_and_updates_plain_fields(tmp_path):
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=secret-value\nOPENAI_MODEL=gpt-5.4\nWQ_USERNAME=alice\n",
+        encoding="utf-8",
+    )
+    manager = EnvManager(tmp_path)
+
+    manager.save(
+        {
+            "OPENAI_API_KEY": MASKED_SECRET,
+            "OPENAI_MODEL": "gpt-5.5",
+            "WQ_USERNAME": "bob",
+        }
+    )
+
+    text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY=secret-value" in text
+    assert "OPENAI_MODEL=gpt-5.5" in text
+    assert "WQ_USERNAME=bob" in text
+
+
+def test_env_save_deduplicates_keys_and_quotes_special_values(tmp_path):
+    (tmp_path / ".env").write_text(
+        "OPENAI_MODEL=old\nOPENAI_MODEL=older\nOPENAI_BASE_URL=https://api.openai.com/v1\n",
+        encoding="utf-8",
+    )
+    manager = EnvManager(tmp_path)
+
+    manager.save({"OPENAI_MODEL": "gpt custom", "OPENAI_BASE_URL": "https://proxy.example/v1"})
+
+    text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert text.count("OPENAI_MODEL=") == 1
+    assert 'OPENAI_MODEL="gpt custom"' in text
+    assert "OPENAI_BASE_URL=https://proxy.example/v1" in text
+
+
+def test_build_cli_command_for_generate_and_backtest():
+    generate = build_cli_command(
+        "generate",
+        {
+            "strategy": "llm",
+            "count": 5,
+            "idea": "行业中性低换手",
+            "no_backtest": True,
+            "verbose": True,
+        },
+    )
+    assert generate == [
+        "generate",
+        "--strategy",
+        "llm",
+        "--count",
+        "5",
+        "--idea",
+        "行业中性低换手",
+        "--no-backtest",
+        "--verbose",
+    ]
+
+    backtest = build_cli_command(
+        "backtest",
+        {"mode": "ids", "ids": "1,2,3", "concurrent": 3},
+    )
+    assert backtest == ["backtest", "--concurrent", "3", "--ids", "1,2,3"]
+
+
+def test_submit_commands_are_not_gui_safe_actions():
+    assert "submit" not in SAFE_ACTIONS
+    assert "sync-submitted" not in SAFE_ACTIONS
+
+
+def test_log_redaction_masks_known_secret_values():
+    output = _redact(
+        "Authorization: Bearer abc123 password=secret-value token=xyz",
+        ["secret-value", "abc123"],
+    )
+    assert "abc123" not in output
+    assert "secret-value" not in output
+    assert "[REDACTED]" in output or MASKED_SECRET in output
+
+
+def test_log_redaction_masks_json_and_openai_key_patterns():
+    output = _redact(
+        '{"api_key": "sk-proj-1234567890abcdef"} token="raw-token" '
+        "OPENAI_API_KEY=sk-test-1234567890abcdef",
+        [],
+    )
+
+    assert "sk-proj-1234567890abcdef" not in output
+    assert "sk-test-1234567890abcdef" not in output
+    assert "raw-token" not in output
+    assert MASKED_SECRET in output or "[REDACTED]" in output
+
+
+def test_static_assets_exist():
+    assert (STATIC_DIR / "index.html").exists()
+    assert (STATIC_DIR / "styles.css").exists()
+    assert (STATIC_DIR / "app.js").exists()
+
+
+def test_job_manager_runs_cli_help_to_completion(tmp_path):
+    manager = JobManager(tmp_path, EnvManager(tmp_path))
+    job = manager.start("help", ["--help"])
+
+    deadline = time.time() + 10
+    snapshot = manager.snapshot()["job"]
+    while snapshot["status"] in {"pending", "running"} and time.time() < deadline:
+        time.sleep(0.05)
+        snapshot = manager.snapshot()["job"]
+
+    assert job.id == snapshot["id"]
+    assert snapshot["status"] == "completed"
+    assert snapshot["returncode"] == 0
+    assert any("Usage:" in line for line in snapshot["output"])
+
+
+def test_job_snapshot_limits_log_lines():
+    job = Job(id="job-1", action="generate", command=["python", "-m", "wq_agent.cli", "generate"])
+    for i in range(MAX_JOB_LOG_LINES + 3):
+        job.append_output(f"line-{i}")
+
+    snapshot = job.snapshot()
+
+    assert snapshot["output"][0].startswith("...仅保留最近")
+    assert "line-0" not in snapshot["output"]
+    assert f"line-{MAX_JOB_LOG_LINES + 2}" in snapshot["output"]
+    assert len(snapshot["output"]) == MAX_JOB_LOG_LINES + 1
+
+
+def test_job_manager_cancel_marks_job_cancelled(tmp_path):
+    manager = JobManager(tmp_path, EnvManager(tmp_path))
+    job = manager.start(
+        "gui",
+        ["gui", "--host", "127.0.0.1", "--port", "0", "--no-open-browser"],
+    )
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        with manager._lock:
+            process_started = manager._process is not None
+        if process_started:
+            break
+        time.sleep(0.05)
+    else:
+        assert False, "GUI child process did not start"
+
+    assert manager.cancel()["cancelled"] is True
+    deadline = time.time() + 10
+    snapshot = manager.snapshot()["job"]
+    while snapshot["status"] in {"pending", "running", "cancelling"} and time.time() < deadline:
+        time.sleep(0.05)
+        snapshot = manager.snapshot()["job"]
+
+    assert job.id == snapshot["id"]
+    assert snapshot["status"] == "cancelled"
+    assert any("停止" in line for line in snapshot["output"])
+
+
+def test_http_post_requires_csrf_token_and_allows_valid_token(tmp_path):
+    (tmp_path / ".env.example").write_text("OPENAI_MODEL=gpt-5.4\n", encoding="utf-8")
+    state, server, thread = _start_test_server(tmp_path)
+    try:
+        url = f"http://127.0.0.1:{state.port}/api/config"
+        body = json.dumps({"values": {"OPENAI_MODEL": "gpt-test"}}).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(request, timeout=5)
+            assert False, "POST without CSRF should fail"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+
+        request = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-WQ-Agent-CSRF": state.csrf_token,
+                "Origin": f"http://127.0.0.1:{state.port}",
+            },
+        )
+        with _open(request) as response:
+            assert response.status == 200
+        assert "OPENAI_MODEL=gpt-test" in (tmp_path / ".env").read_text(encoding="utf-8")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_http_get_api_requires_csrf_after_meta_and_sends_security_headers(tmp_path):
+    (tmp_path / ".env.example").write_text("OPENAI_MODEL=gpt-5.4\n", encoding="utf-8")
+    state, server, thread = _start_test_server(tmp_path)
+    try:
+        meta_request = urllib.request.Request(f"http://127.0.0.1:{state.port}/api/meta")
+        with _open(meta_request) as response:
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            assert response.headers["X-Content-Type-Options"] == "nosniff"
+            assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+
+        config_url = f"http://127.0.0.1:{state.port}/api/config"
+        try:
+            _open(urllib.request.Request(config_url))
+            assert False, "GET /api/config without CSRF should fail"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+
+        request = urllib.request.Request(
+            config_url,
+            headers={
+                "X-WQ-Agent-CSRF": state.csrf_token,
+                "Origin": f"http://127.0.0.1:{state.port}",
+            },
+        )
+        with _open(request) as response:
+            assert response.status == 200
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_http_rejects_invalid_host_and_origin(tmp_path):
+    state, server, thread = _start_test_server(tmp_path)
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", state.port, timeout=5)
+        conn.request("GET", "/api/meta", headers={"Host": "evil.test"})
+        response = conn.getresponse()
+        assert response.status == 400
+        conn.close()
+
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{state.port}/api/config",
+            headers={
+                "X-WQ-Agent-CSRF": state.csrf_token,
+                "Origin": "http://evil.test",
+            },
+        )
+        try:
+            _open(request)
+            assert False, "GET with invalid Origin should fail"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_static_assets_reject_path_traversal_and_send_security_headers(tmp_path):
+    state, server, thread = _start_test_server(tmp_path)
+    try:
+        index_request = urllib.request.Request(f"http://127.0.0.1:{state.port}/static/index.html")
+        with _open(index_request) as response:
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+
+        traversal = urllib.request.Request(
+            f"http://127.0.0.1:{state.port}/static/%2e%2e%2fserver.py"
+        )
+        try:
+            _open(traversal)
+            assert False, "static path traversal should fail"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+    finally:
+        _stop_test_server(server, thread)

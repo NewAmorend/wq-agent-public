@@ -46,6 +46,22 @@ def _load_user_idea(idea: Optional[str], idea_file: Optional[Path]) -> str | Non
 
 
 @app.command()
+def gui(
+    host: str = typer.Option("127.0.0.1", "--host", help="GUI bind host (loopback only)"),
+    port: int = typer.Option(8765, "--port", help="GUI port"),
+    open_browser: bool = typer.Option(True, "--open-browser/--no-open-browser"),
+):
+    """Start the local Chinese web GUI."""
+    from .gui.server import serve_gui
+
+    try:
+        serve_gui(host=host, port=port, open_browser=open_browser)
+    except Exception as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command()
 def generate(
     strategy: str = typer.Option("llm", "--strategy", "-s", help="Generation strategy: llm, template, factor_mining"),
     count: int = typer.Option(18, "--count", "-n", help="Number of alphas to generate"),
