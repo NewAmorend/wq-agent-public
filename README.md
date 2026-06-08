@@ -55,6 +55,9 @@ cp .env.example .env
 # 全流程：生成 → 回测 → 评估 → 展示
 wq-agent run --strategy llm --count 18 --batches 1
 
+# 交互式 TUI 工作台
+wq-agent tui
+
 # 仅生成（不回测）
 wq-agent generate --strategy template -n 20 --no-backtest
 
@@ -75,6 +78,10 @@ wq-agent status
 # 重复度报告：按 wrapper 家族（outer-2）看库里结构集中度
 wq-agent diversity
 ```
+
+### TUI 工作台
+
+`wq-agent tui` 提供一个键盘优先的终端工作台：左侧设置 strategy/count/batches/idea，右侧查看任务日志和最近 alpha。快捷键：`g` 仅生成、`r` 全流程、`f` refine、`b` 回测 pending、`Ctrl+R` 刷新、`q` 退出。
 
 ### 减少 alpha 重复性
 

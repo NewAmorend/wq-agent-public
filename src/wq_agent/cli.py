@@ -46,6 +46,22 @@ def _load_user_idea(idea: Optional[str], idea_file: Optional[Path]) -> str | Non
 
 
 @app.command()
+def tui(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+):
+    """Launch the interactive terminal workbench."""
+    _setup_logging(verbose)
+    try:
+        from .tui import run_tui
+    except ModuleNotFoundError as exc:
+        if exc.name == "textual":
+            console.print("[red]Textual is required for the TUI. Install project dependencies first.[/red]")
+            raise typer.Exit(1) from exc
+        raise
+    run_tui()
+
+
+@app.command()
 def generate(
     strategy: str = typer.Option("llm", "--strategy", "-s", help="Generation strategy: llm, template, factor_mining"),
     count: int = typer.Option(18, "--count", "-n", help="Number of alphas to generate"),
