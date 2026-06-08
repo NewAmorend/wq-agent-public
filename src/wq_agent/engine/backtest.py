@@ -60,10 +60,11 @@ def extract_field_candidates(expression: str) -> list[str]:
 
 
 class BacktestEngine:
-    def __init__(self, wq: WQClient, db: Database, settings: Settings):
+    def __init__(self, wq: WQClient, db: Database, settings: Settings, region_override: str | None = None):
         self.wq = wq
         self.db = db
         self.settings = settings
+        self.region_override = region_override
         self.evaluator = AlphaEvaluator(settings)
 
     async def backtest_batch(
@@ -138,8 +139,9 @@ class BacktestEngine:
 
     async def _backtest_expression(self, alpha_id: int, expression: str) -> BacktestResult | None:
         logger.info(f"Backtesting alpha {alpha_id}: {expression[:60]}...")
+        region = self.region_override or self.settings.WQ_REGION
 
-        submit_result = await self.wq.submit_simulation(expression)
+        submit_result = await self.wq.submit_simulation(expression, region=region)
         if submit_result.get("status") == "error":
             msg = submit_result.get("message", "")
             logger.error(f"Simulation submit failed for alpha {alpha_id}: {msg}")
@@ -161,7 +163,7 @@ class BacktestEngine:
 
         backtest = BacktestResult(
             alpha_id=alpha_id,
-            region=self.settings.WQ_REGION,
+            region=region,
             universe=self.settings.WQ_UNIVERSE,
             delay=self.settings.WQ_DELAY,
             neutralization=self.settings.WQ_NEUTRALIZATION,

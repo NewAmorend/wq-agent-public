@@ -22,6 +22,27 @@ _STRATEGIES = [
     ("factor_mining", GenerationStrategy.FACTOR_MINING.value),
 ]
 
+_DATASET_CATEGORIES = [
+    ("all datasets", "all"),
+    ("price / volume", "pv"),
+    ("fundamental", "fundamental"),
+    ("analyst", "analyst"),
+    ("model", "model"),
+    ("news", "news"),
+    ("option", "option"),
+    ("sentiment", "sentiment"),
+    ("social media", "socialmedia"),
+]
+
+_MARKETS = [
+    ("default market", "default"),
+    ("USA", "USA"),
+    ("China", "CHN"),
+    ("Europe", "EUR"),
+    ("Asia", "ASI"),
+    ("Global", "GLB"),
+]
+
 
 class _TuiConsole:
     def __init__(self, write: Callable[[str], None], width: int = 110):
@@ -42,18 +63,8 @@ class WQAgentTui(App[None]):
 
     CSS = """
     Screen {
-        background: #10110f;
-        color: #d7ded3;
-    }
-
-    Header {
-        background: #18211b;
-        color: #e7f0df;
-    }
-
-    Footer {
-        background: #111713;
-        color: #aebaa8;
+        background: #0f1419;
+        color: #d8dee9;
     }
 
     #workspace {
@@ -61,140 +72,56 @@ class WQAgentTui(App[None]):
     }
 
     #sidebar {
-        width: 36;
-        min-width: 32;
-        padding: 1 1;
-        border-right: tall #3d473c;
-        background: #151915;
+        width: 34;
+        min-width: 30;
+        padding: 1;
+        border-right: solid #2f3742;
+        background: #111821;
     }
 
     #main {
         width: 1fr;
         padding: 1 1 0 1;
-        background: #10110f;
     }
 
-    #brand {
-        height: 4;
+    #status {
+        height: auto;
+        min-height: 8;
         padding: 1;
+        border: solid #2f874f;
         margin-bottom: 1;
-        border: tall #66825d;
-        background: #1d251d;
-        color: #f1f7e9;
-        text-style: bold;
-    }
-
-    #context {
-        height: 3;
-        padding: 0 1;
-        margin-bottom: 1;
-        color: #aebaa8;
-        border: tall #343b33;
-        background: #121713;
-    }
-
-    .section-title {
-        height: 1;
-        margin-top: 1;
-        color: #c6d9b8;
-        text-style: bold;
-    }
-
-    .field-label {
-        height: 1;
-        color: #9bb38e;
-        margin-top: 1;
-    }
-
-    Select, Input {
-        height: 3;
-        margin-bottom: 0;
-        border: tall #374033;
-        background: #0f130f;
-    }
-
-    Input:focus, Select:focus {
-        border: tall #b2c98a;
-    }
-
-    Button {
-        width: 100%;
-        height: 3;
-        margin-top: 1;
-        border: tall #3f4a3c;
-    }
-
-    #run {
-        margin-top: 2;
-    }
-
-    #topbar {
-        height: 4;
-        margin-bottom: 1;
-    }
-
-    #run-state {
-        width: 16;
-        height: 4;
-        padding: 1;
-        border: tall #6a7e55;
-        background: #1b2419;
-        color: #dceccd;
-        text-align: center;
-        text-style: bold;
-    }
-
-    #paths {
-        width: 1fr;
-        height: 4;
-        padding: 1 2;
-        margin-left: 1;
-        border: tall #343b33;
-        background: #141814;
-        color: #aebaa8;
-    }
-
-    #metrics {
-        height: 5;
-        margin-bottom: 1;
-    }
-
-    .metric {
-        width: 1fr;
-        height: 5;
-        padding: 1 2;
-        margin-right: 1;
-        border: tall #3a4538;
-        background: #151b15;
-        color: #d8e5cf;
-    }
-
-    #metric-submitted {
-        margin-right: 0;
-    }
-
-    #log-title, #alphas-title {
-        height: 1;
-        color: #c6d9b8;
-        text-style: bold;
     }
 
     #log {
         height: 1fr;
-        min-height: 12;
-        border: tall #3d473c;
-        background: #0d100d;
+        border: solid #334155;
         padding: 0 1;
-    }
-
-    #alphas-title {
-        margin-top: 1;
     }
 
     #alphas {
         height: 12;
-        border: tall #3d473c;
-        background: #0d100d;
+        margin-top: 1;
+        border: solid #334155;
+    }
+
+    .label {
+        color: #8fb3ff;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    .hint {
+        color: #7d8590;
+        margin: 1 0;
+    }
+
+    Button {
+        width: 100%;
+        margin-top: 1;
+    }
+
+    Input, Select {
+        margin-bottom: 1;
     }
     """
 
@@ -216,48 +143,37 @@ class WQAgentTui(App[None]):
         self._busy = False
 
     def compose(self) -> ComposeResult:
-        settings = get_settings()
         yield Header(show_clock=True)
         with Horizontal(id="workspace"):
             with Vertical(id="sidebar"):
-                yield Static("wq-agent\nalpha workbench", id="brand")
-                yield Static(
-                    f"{settings.WQ_REGION} / {settings.WQ_UNIVERSE}\n"
-                    f"delay {settings.WQ_DELAY} | {settings.WQ_NEUTRALIZATION.lower()}",
-                    id="context",
-                )
-                yield Static("Session", classes="section-title")
-                yield Static("Strategy", classes="field-label")
+                yield Static("wq-agent", classes="label")
+                yield Static("Generate, test, refine. Keep the loop tight.", classes="hint")
+                yield Static("Strategy", classes="label")
                 yield Select(_STRATEGIES, value=GenerationStrategy.LLM.value, id="strategy")
-                yield Static("Count", classes="field-label")
-                yield Input(value="18", placeholder="18", id="count")
-                yield Static("Batches", classes="field-label")
-                yield Input(value="1", placeholder="1", id="batches")
-                yield Static("Idea", classes="field-label")
-                yield Input(placeholder="alpha thesis", id="idea")
-                yield Static("Actions", classes="section-title")
-                yield Button("Run full pipeline", id="run", variant="success")
+                yield Static("Dataset", classes="label")
+                yield Select(_DATASET_CATEGORIES, value="all", id="dataset")
+                yield Static("Market", classes="label")
+                yield Select(_MARKETS, value="default", id="market")
+                yield Static("Count", classes="label")
+                yield Input(value="18", placeholder="alphas per batch", id="count")
+                yield Static("Batches", classes="label")
+                yield Input(value="1", placeholder="full pipeline batches", id="batches")
+                yield Static("Idea", classes="label")
+                yield Input(placeholder="natural-language alpha thesis", id="idea")
                 yield Button("Generate only", id="generate", variant="primary")
+                yield Button("Run full pipeline", id="run", variant="success")
                 yield Button("Refine near-miss", id="refine")
                 yield Button("Backtest pending", id="backtest")
                 yield Button("Refresh dashboard", id="refresh")
             with Vertical(id="main"):
-                with Horizontal(id="topbar"):
-                    yield Static("IDLE", id="run-state")
-                    yield Static("Loading workspace paths...", id="paths")
-                with Horizontal(id="metrics"):
-                    yield Static("Generated\n--", id="metric-generated", classes="metric")
-                    yield Static("Backtesting\n--", id="metric-backtesting", classes="metric")
-                    yield Static("High\n--", id="metric-high", classes="metric")
-                    yield Static("Submitted\n--", id="metric-submitted", classes="metric")
-                yield Static("Task Log", id="log-title")
+                yield Static("Loading dashboard...", id="status")
                 yield RichLog(id="log", wrap=True, highlight=True, markup=True)
-                yield Static("Recent Alphas", id="alphas-title")
                 yield DataTable(id="alphas", zebra_stripes=True)
         yield Footer()
 
     async def on_mount(self) -> None:
         self.write_log("[bold cyan]wq-agent TUI ready[/bold cyan]")
+        self.write_log("Use buttons or keys: g generate, r run, f refine, b backtest, ctrl+r refresh, q quit.")
         await self.refresh_dashboard()
 
     def write_log(self, message: str) -> None:
@@ -310,20 +226,16 @@ class WQAgentTui(App[None]):
             await db.close()
 
         high_count = len([r for r in high if (r.get("fitness") or 0) >= settings.MIN_FITNESS])
-        self.query_one("#paths", Static).update(
-            f"db [bold]{settings.DB_PATH}[/bold]\n"
-            f"wiki [bold]{settings.WIKI_DIR}[/bold] + [bold]{settings.WIKI_AUTO_RECORD_DIR}[/bold]"
+        status = (
+            "[bold]Dashboard[/bold]\n"
+            f"generated: [cyan]{stats.get('generated', 0)}[/cyan]  "
+            f"backtesting: [yellow]{stats.get('backtesting', 0)}[/yellow]  "
+            f"completed/high: [green]{high_count}[/green]  "
+            f"submitted: [magenta]{stats.get('submitted', 0)}[/magenta]\n"
+            f"db: [dim]{settings.DB_PATH}[/dim]\n"
+            f"wiki: [dim]{settings.WIKI_DIR} + {settings.WIKI_AUTO_RECORD_DIR}[/dim]"
         )
-        self.query_one("#metric-generated", Static).update(
-            f"Generated\n[bold cyan]{stats.get('generated', 0)}[/bold cyan]"
-        )
-        self.query_one("#metric-backtesting", Static).update(
-            f"Backtesting\n[bold yellow]{stats.get('backtesting', 0)}[/bold yellow]"
-        )
-        self.query_one("#metric-high", Static).update(f"High\n[bold green]{high_count}[/bold green]")
-        self.query_one("#metric-submitted", Static).update(
-            f"Submitted\n[bold magenta]{stats.get('submitted', 0)}[/bold magenta]"
-        )
+        self.query_one("#status", Static).update(status)
 
         table = self.query_one("#alphas", DataTable)
         table.clear(columns=True)
@@ -342,33 +254,30 @@ class WQAgentTui(App[None]):
             self.write_log("[yellow]A task is already running.[/yellow]")
             return
         self._busy = True
-        succeeded = False
-        self._set_run_state("RUNNING", "#f2c36b")
         self.write_log(f"\n[bold cyan]> {label}[/bold cyan]")
         try:
             await job()
-            succeeded = True
             self.write_log(f"[bold green]OK {label} finished[/bold green]")
-            self._set_run_state("DONE", "#92c47d")
         except Exception as exc:
             self.write_log(f"[bold red]ERR {label} failed:[/bold red] {exc}")
-            self._set_run_state("ERROR", "#d77969")
         finally:
             self._busy = False
             await self.refresh_dashboard()
-            if succeeded:
-                self.set_timer(1.5, lambda: self._set_run_state("IDLE", "#dceccd"))
 
     async def _generate_only(self) -> None:
         count = self._positive_int("#count", default=18)
         strategy = self._strategy()
         idea = self._idea()
+        dataset_categories = self._dataset_categories()
+        market_region = self._market_region()
         await self._with_orchestrator(
             lambda orch: orch.run(
                 strategy=strategy,
                 count=count,
                 auto_backtest=False,
                 user_idea=idea,
+                dataset_categories=dataset_categories,
+                market_region=market_region,
             )
         )
 
@@ -377,19 +286,39 @@ class WQAgentTui(App[None]):
         batches = self._positive_int("#batches", default=1)
         strategy = self._strategy()
         idea = self._idea()
+        dataset_categories = self._dataset_categories()
+        market_region = self._market_region()
 
         async def _job(orch: Orchestrator) -> None:
             for i in range(1, batches + 1):
                 self.write_log(f"[bold magenta]Batch {i}/{batches}[/bold magenta]")
-                await orch.run(strategy=strategy, count=count, auto_backtest=True, user_idea=idea)
+                await orch.run(
+                    strategy=strategy,
+                    count=count,
+                    auto_backtest=True,
+                    user_idea=idea,
+                    dataset_categories=dataset_categories,
+                    market_region=market_region,
+                )
 
         await self._with_orchestrator(_job)
 
     async def _refine(self) -> None:
         count = self._positive_int("#count", default=10)
-        await self._with_orchestrator(lambda orch: orch.refine(count=count, auto_backtest=True))
+        dataset_categories = self._dataset_categories()
+        market_region = self._market_region()
+        await self._with_orchestrator(
+            lambda orch: orch.refine(
+                count=count,
+                auto_backtest=True,
+                dataset_categories=dataset_categories,
+                market_region=market_region,
+            )
+        )
 
     async def _backtest_pending(self) -> None:
+        market_region = self._market_region()
+
         async def _job(orch: Orchestrator) -> None:
             pending = await orch.db.list_alphas(status=AlphaStatus.GENERATED, limit=1000)
             ids = [a.id for a in pending if a.id]
@@ -397,8 +326,7 @@ class WQAgentTui(App[None]):
                 self.write_log("[yellow]No pending generated alphas.[/yellow]")
                 return
             self.write_log(f"Backtesting {len(ids)} pending alphas")
-            await orch.backtest(ids)
-
+            await orch.backtest(ids, market_region=market_region)
         await self._with_orchestrator(_job)
 
     async def _with_orchestrator(self, job: Callable[[Orchestrator], Awaitable[Any]]) -> None:
@@ -421,11 +349,6 @@ class WQAgentTui(App[None]):
         finally:
             orchestrator_module.console = old_console
 
-    def _set_run_state(self, label: str, color: str) -> None:
-        state = self.query_one("#run-state", Static)
-        state.update(label)
-        state.styles.color = color
-
     def _strategy(self) -> GenerationStrategy:
         value = self.query_one("#strategy", Select).value
         return GenerationStrategy(str(value or GenerationStrategy.LLM.value))
@@ -433,6 +356,14 @@ class WQAgentTui(App[None]):
     def _idea(self) -> str | None:
         value = self.query_one("#idea", Input).value.strip()
         return value or None
+
+    def _dataset_categories(self) -> list[str] | None:
+        value = str(self.query_one("#dataset", Select).value or "all")
+        return None if value == "all" else [value]
+
+    def _market_region(self) -> str | None:
+        value = str(self.query_one("#market", Select).value or "default")
+        return None if value == "default" else value
 
     def _positive_int(self, selector: str, default: int) -> int:
         raw = self.query_one(selector, Input).value.strip()
@@ -446,7 +377,7 @@ class WQAgentTui(App[None]):
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
-    return text[: max(0, limit - 3)].rstrip() + "..."
+    return text[: max(0, limit - 1)].rstrip() + "..."
 
 
 def run_tui() -> None:

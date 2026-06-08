@@ -118,13 +118,19 @@ class Orchestrator:
         count: int = 18,
         auto_backtest: bool = True,
         user_idea: str | None = None,
+        dataset_categories: list[str] | None = None,
+        market_region: str | None = None,
     ) -> list[AlphaRecord]:
         generator = self._generators.get(strategy)
         if not generator:
             raise ValueError(f"Unknown strategy: {strategy}")
 
         console.print("\n[bold cyan]Fetching data fields and operators from WQ Brain...[/bold cyan]")
-        data_fields = await self.wq.get_data_fields()
+        if dataset_categories:
+            console.print(f"  Dataset categories: [yellow]{', '.join(dataset_categories)}[/yellow]")
+        if market_region:
+            console.print(f"  Market: [yellow]{market_region}[/yellow]")
+        data_fields = await self.wq.get_data_fields(region=market_region, categories=dataset_categories)
         operators = await self.wq.get_operators()
         blacklist = await self.db.get_blacklisted_fields(min_fail_count=3)
         if blacklist:
@@ -217,7 +223,7 @@ class Orchestrator:
 
         if auto_backtest and ids:
             console.print(f"\n[bold cyan]Starting backtest for {len(ids)} alphas...[/bold cyan]")
-            engine = BacktestEngine(self.wq, self.db, self.settings)
+            engine = BacktestEngine(self.wq, self.db, self.settings, region_override=market_region)
             results = await engine.backtest_batch(ids)
             self._display_results(records, results)
             if self._auto_recorder:
@@ -230,8 +236,8 @@ class Orchestrator:
 
         return records
 
-    async def backtest(self, alpha_ids: list[int]) -> list[BacktestResult]:
-        engine = BacktestEngine(self.wq, self.db, self.settings)
+    async def backtest(self, alpha_ids: list[int], market_region: str | None = None) -> list[BacktestResult]:
+        engine = BacktestEngine(self.wq, self.db, self.settings, region_override=market_region)
         return await engine.backtest_batch(alpha_ids)
 
     async def refine(
@@ -239,6 +245,8 @@ class Orchestrator:
         base_id: int | None = None,
         count: int = 10,
         auto_backtest: bool = True,
+        dataset_categories: list[str] | None = None,
+        market_region: str | None = None,
     ) -> list[AlphaRecord]:
         """对 MEDIUM 评级（差一项即过）的 alpha 生成微调变体。
 
@@ -287,7 +295,11 @@ class Orchestrator:
         )
 
         console.print("[cyan]Fetching fields & operators for refine context...[/cyan]")
-        data_fields = await self.wq.get_data_fields()
+        if dataset_categories:
+            console.print(f"  Dataset categories: [yellow]{', '.join(dataset_categories)}[/yellow]")
+        if market_region:
+            console.print(f"  Market: [yellow]{market_region}[/yellow]")
+        data_fields = await self.wq.get_data_fields(region=market_region, categories=dataset_categories)
         operators = await self.wq.get_operators()
 
         # 把历史 top-fitness 也喂给 refine——base 可能就是 top-1，但其它 top 给 LLM 更多模式参考
@@ -324,7 +336,7 @@ class Orchestrator:
 
         if auto_backtest and ids:
             console.print(f"[cyan]Backtesting {len(ids)} variants...[/cyan]")
-            engine = BacktestEngine(self.wq, self.db, self.settings)
+            engine = BacktestEngine(self.wq, self.db, self.settings, region_override=market_region)
             results = await engine.backtest_batch(ids)
             self._display_results(records, results)
             if self._auto_recorder:
