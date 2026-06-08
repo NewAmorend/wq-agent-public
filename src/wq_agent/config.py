@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # 本地模型（pip install fastembed 后启用）；候选见 fastembed.TextEmbedding.list_supported_models()
     LOCAL_EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8-sig"}
 
 
 @lru_cache

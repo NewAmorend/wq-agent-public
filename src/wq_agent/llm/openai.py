@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 import httpx
 from loguru import logger
 
 from .base import BaseLLMProvider, LLMAPIError, chat_completion_with_retry, post_json_with_retry
+from .security import validate_api_key, validate_transport_security
 
 
 _RESPONSES_FALLBACK_STATUS = {404, 405, 501}
@@ -18,7 +17,6 @@ _RESPONSES_FALLBACK_PHRASES = (
     "cannot post /v1/responses",
     "invalid endpoint",
 )
-_LOCAL_HTTP_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _REASONING_EFFORTS = {"", "none", "minimal", "low", "medium", "high", "xhigh"}
 _CHAT_TOKEN_PARAMS = {"max_tokens", "max_completion_tokens"}
 
@@ -222,22 +220,11 @@ class OpenAIProvider(BaseLLMProvider):
         return any(phrase in body for phrase in _RESPONSES_FALLBACK_PHRASES)
 
     def _validate_api_key(self) -> None:
-        key = self.api_key.strip()
-        if not key or key.lower().startswith("your_"):
-            raise ValueError(
-                "OPENAI_API_KEY is required for LLM_PROVIDER=openai. "
-                "Set a real API key in .env before running LLM generation."
-            )
+        validate_api_key(self.api_key, env_key="OPENAI_API_KEY", provider="OpenAI")
 
     def _validate_transport_security(self, allow_insecure_http: bool) -> None:
-        parsed = urlparse(self.base_url)
-        if parsed.scheme != "http":
-            return
-        host = (parsed.hostname or "").lower()
-        if host in _LOCAL_HTTP_HOSTS or allow_insecure_http:
-            return
-        raise ValueError(
-            "OPENAI_BASE_URL uses insecure HTTP for a non-local host. "
-            "Use HTTPS, a localhost/127.0.0.1 URL, or set "
-            "OPENAI_ALLOW_INSECURE_HTTP=true only for a trusted private endpoint."
+        validate_transport_security(
+            self.base_url,
+            env_key="OPENAI_BASE_URL",
+            allow_insecure_http=allow_insecure_http,
         )

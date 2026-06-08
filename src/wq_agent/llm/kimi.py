@@ -4,6 +4,7 @@ import httpx
 from loguru import logger
 
 from .base import BaseLLMProvider, chat_completion_with_retry
+from .security import validate_api_key, validate_transport_security
 
 
 class KimiProvider(BaseLLMProvider):
@@ -18,6 +19,8 @@ class KimiProvider(BaseLLMProvider):
         self.base_url = base_url
         self.default_model = model
         self.default_max_tokens = max_tokens
+        validate_api_key(self.api_key, env_key="KIMI_API_KEY", provider="Kimi")
+        validate_transport_security(self.base_url, env_key="KIMI_BASE_URL")
         self._client = httpx.AsyncClient(
             headers={
                 "Content-Type": "application/json",

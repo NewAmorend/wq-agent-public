@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from wq_agent.config import Settings
-from wq_agent.llm import LLMFactory, OpenAIProvider
+from wq_agent.llm import DeepSeekProvider, KimiProvider, LLMFactory, OpenAIProvider
 
 
 class _Resp:
@@ -58,12 +58,70 @@ def test_factory_creates_openai_provider():
     assert provider.wire_api == "responses"
 
 
+def test_factory_uses_provider_defaults_and_valid_global_model_override():
+    kimi = LLMFactory.from_settings(
+        Settings(
+            LLM_PROVIDER="kimi",
+            LLM_MODEL="kimi-k2.6",
+            LLM_MAX_TOKENS=777,
+            KIMI_API_KEY="test-key",
+            KIMI_BASE_URL="",
+            KIMI_MODEL="",
+        )
+    )
+
+    assert isinstance(kimi, KimiProvider)
+    assert kimi.base_url == "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
+    assert kimi.default_model == "kimi-k2.6"
+    assert kimi.default_max_tokens == 777
+
+    deepseek = LLMFactory.from_settings(
+        Settings(
+            LLM_PROVIDER="deepseek",
+            LLM_MAX_TOKENS=888,
+            DEEPSEEK_API_KEY="test-key",
+            DEEPSEEK_BASE_URL="",
+            DEEPSEEK_MODEL="",
+        )
+    )
+
+    assert isinstance(deepseek, DeepSeekProvider)
+    assert deepseek.base_url == "https://api.deepseek.com/v1/chat/completions"
+    assert deepseek.default_model == "deepseek-chat"
+    assert deepseek.default_max_tokens == 888
+
+
+def test_factory_rejects_global_model_that_does_not_match_provider():
+    with pytest.raises(ValueError, match="LLM_MODEL"):
+        LLMFactory.from_settings(
+            Settings(
+                LLM_PROVIDER="deepseek",
+                LLM_MODEL="gpt-5.4",
+                DEEPSEEK_API_KEY="test-key",
+            )
+        )
+
+    provider = LLMFactory.from_settings(
+        Settings(
+            LLM_PROVIDER="deepseek",
+            LLM_MODEL="",
+            DEEPSEEK_MODEL="deepseek-custom",
+            DEEPSEEK_API_KEY="test-key",
+        )
+    )
+    assert isinstance(provider, DeepSeekProvider)
+    assert provider.default_model == "deepseek-custom"
+
+
 def test_openai_provider_rejects_missing_or_placeholder_api_key():
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
         OpenAIProvider(api_key="", base_url="https://api.openai.com/v1")
 
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
         OpenAIProvider(api_key="your_openai_or_proxy_key", base_url="https://api.openai.com/v1")
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        OpenAIProvider(api_key="change_me", base_url="https://api.openai.com/v1")
 
 
 def test_openai_provider_rejects_remote_insecure_http_but_allows_localhost():
@@ -72,6 +130,23 @@ def test_openai_provider_rejects_remote_insecure_http_but_allows_localhost():
 
     provider = OpenAIProvider(api_key="test-key", base_url="http://127.0.0.1:8080")
     assert provider.base_url == "http://127.0.0.1:8080"
+
+
+def test_kimi_and_deepseek_reject_placeholder_keys_and_remote_http():
+    with pytest.raises(ValueError, match="KIMI_API_KEY"):
+        KimiProvider(api_key="placeholder")
+
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+        DeepSeekProvider(api_key="todo-fill-me")
+
+    with pytest.raises(ValueError, match="KIMI_BASE_URL"):
+        KimiProvider(api_key="test-key", base_url="http://example.com/chat")
+
+    with pytest.raises(ValueError, match="DEEPSEEK_BASE_URL"):
+        DeepSeekProvider(api_key="test-key", base_url="http://example.com/chat")
+
+    assert KimiProvider(api_key="test-key", base_url="http://127.0.0.1:8080/chat").base_url
+    assert DeepSeekProvider(api_key="test-key", base_url="http://localhost:8080/chat").base_url
 
 
 @pytest.mark.asyncio
@@ -164,6 +239,26 @@ async def test_chat_completions_optional_token_and_reasoning_parameters():
     assert payload["max_completion_tokens"] == 99
     assert "max_tokens" not in payload
     assert payload["reasoning_effort"] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_deepseek_uses_configured_default_max_tokens():
+    provider = DeepSeekProvider(
+        api_key="test-key",
+        base_url="https://deepseek.example/chat",
+        model="deepseek-test",
+        max_tokens=222,
+    )
+    provider._client = _Client(
+        [_Resp(200, {"choices": [{"message": {"content": "deepseek alpha"}}]})]
+    )
+
+    out = await provider.generate("make alpha")
+
+    assert out == "deepseek alpha"
+    payload = provider._client.calls[0]["json"]
+    assert payload["model"] == "deepseek-test"
+    assert payload["max_tokens"] == 222
 
 
 @pytest.mark.asyncio

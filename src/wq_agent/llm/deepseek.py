@@ -4,12 +4,23 @@ import httpx
 from loguru import logger
 
 from .base import BaseLLMProvider, chat_completion_with_retry
+from .security import validate_api_key, validate_transport_security
 
 
 class DeepSeekProvider(BaseLLMProvider):
-    def __init__(self, api_key: str, base_url: str = "https://api.deepseek.com/v1/chat/completions"):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.deepseek.com/v1/chat/completions",
+        model: str = "deepseek-chat",
+        max_tokens: int = 32768,
+    ):
         self.api_key = api_key
         self.base_url = base_url
+        self.default_model = model
+        self.default_max_tokens = max_tokens
+        validate_api_key(self.api_key, env_key="DEEPSEEK_API_KEY", provider="DeepSeek")
+        validate_transport_security(self.base_url, env_key="DEEPSEEK_BASE_URL")
         self._client = httpx.AsyncClient(
             headers={
                 "Content-Type": "application/json",
@@ -23,9 +34,10 @@ class DeepSeekProvider(BaseLLMProvider):
         prompt: str,
         model: str | None = None,
         temperature: float = 0.3,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> str:
-        model = model or "deepseek-chat"
+        model = model or self.default_model
+        max_tokens = max_tokens or self.default_max_tokens
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
