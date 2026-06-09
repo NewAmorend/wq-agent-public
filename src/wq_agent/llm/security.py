@@ -15,6 +15,11 @@ def is_real_secret(value: str | None) -> bool:
     return bool(text) and text != "********" and not PLACEHOLDER_SECRET_RE.match(text)
 
 
+def is_local_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() in LOCAL_HTTP_HOSTS
+
+
 def validate_api_key(api_key: str, *, env_key: str, provider: str) -> None:
     if is_real_secret(api_key):
         return

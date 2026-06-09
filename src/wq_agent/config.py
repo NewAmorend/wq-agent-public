@@ -13,12 +13,21 @@ class Settings(BaseSettings):
     WQ_PASTEURIZATION: str = "ON"
     WQ_MAX_CONCURRENT: int = 5
 
-    LLM_PROVIDER: str = "openai"
+    LLM_PROVIDER: str = "openai_compatible"
+    LLM_BASE_URL: str = "https://api.openai.com/v1"
+    LLM_API_KEY: str = ""
     LLM_MODEL: str = ""
+    LLM_WIRE_API: str = "auto"
+    LLM_REASONING_EFFORT: str = ""
+    LLM_STORE: bool = False
+    LLM_ALLOW_INSECURE_HTTP: bool = False
+    LLM_CHAT_TOKEN_PARAM: str = "max_tokens"
+    LLM_CHAT_REASONING_EFFORT: bool = False
     LLM_MAX_TOKENS: int = 32768
     # 主生成的采样温度。偏低（0.3）易产出同质表达式；调高增大结构/字段多样性，
     # 是最便宜的"减重复"旋钮。refine 另用更高温度（0.55）做变体探索。
     LLM_GEN_TEMPERATURE: float = 0.5
+    ANTHROPIC_VERSION: str = "2023-06-01"
     KIMI_API_KEY: str = ""
     KIMI_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
     KIMI_MODEL: str = "kimi-k2.6"

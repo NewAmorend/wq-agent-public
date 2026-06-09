@@ -4,7 +4,7 @@ import httpx
 from loguru import logger
 
 from .base import BaseLLMProvider, LLMAPIError, chat_completion_with_retry, post_json_with_retry
-from .security import validate_api_key, validate_transport_security
+from .security import is_local_url, validate_api_key, validate_transport_security
 
 
 _RESPONSES_FALLBACK_STATUS = {404, 405, 501}
@@ -21,7 +21,7 @@ _REASONING_EFFORTS = {"", "none", "minimal", "low", "medium", "high", "xhigh"}
 _CHAT_TOKEN_PARAMS = {"max_tokens", "max_completion_tokens"}
 
 
-class OpenAIProvider(BaseLLMProvider):
+class OpenAICompatibleProvider(BaseLLMProvider):
     def __init__(
         self,
         api_key: str,
@@ -35,7 +35,7 @@ class OpenAIProvider(BaseLLMProvider):
         chat_token_param: str = "max_tokens",
         chat_reasoning_effort: bool = False,
     ):
-        self.api_key = api_key
+        self.api_key = api_key.strip()
         self.base_url = base_url.rstrip("/")
         self.default_model = model
         self.wire_api = self._normalize_wire_api(wire_api)
@@ -93,8 +93,9 @@ class OpenAIProvider(BaseLLMProvider):
             "input": [{"role": "user", "content": prompt}],
             "temperature": temperature,
             "max_output_tokens": max_tokens,
-            "store": self.store,
         }
+        if self.store:
+            payload["store"] = True
         if self.reasoning_effort:
             payload["reasoning"] = {"effort": self.reasoning_effort}
 
@@ -120,9 +121,10 @@ class OpenAIProvider(BaseLLMProvider):
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
-            "store": self.store,
             "stream": False,
         }
+        if self.store:
+            payload["store"] = True
         payload[self.chat_token_param] = max_tokens
         if self.reasoning_effort and self.chat_reasoning_effort:
             payload["reasoning_effort"] = self.reasoning_effort
@@ -187,7 +189,7 @@ class OpenAIProvider(BaseLLMProvider):
         }
         if normalized not in aliases:
             raise ValueError(
-                "OPENAI_WIRE_API must be one of: auto, responses, chat_completions"
+                "LLM_WIRE_API must be one of: auto, responses, chat_completions"
             )
         return aliases[normalized]
 
@@ -196,7 +198,7 @@ class OpenAIProvider(BaseLLMProvider):
         normalized = reasoning_effort.strip().lower()
         if normalized not in _REASONING_EFFORTS:
             raise ValueError(
-                "OPENAI_REASONING_EFFORT must be blank or one of: "
+                "LLM_REASONING_EFFORT must be blank or one of: "
                 "none, minimal, low, medium, high, xhigh"
             )
         return normalized
@@ -206,7 +208,7 @@ class OpenAIProvider(BaseLLMProvider):
         normalized = chat_token_param.strip().lower()
         if normalized not in _CHAT_TOKEN_PARAMS:
             raise ValueError(
-                "OPENAI_CHAT_TOKEN_PARAM must be one of: max_tokens, max_completion_tokens"
+                "LLM_CHAT_TOKEN_PARAM must be one of: max_tokens, max_completion_tokens"
             )
         return normalized
 
@@ -220,11 +222,19 @@ class OpenAIProvider(BaseLLMProvider):
         return any(phrase in body for phrase in _RESPONSES_FALLBACK_PHRASES)
 
     def _validate_api_key(self) -> None:
-        validate_api_key(self.api_key, env_key="OPENAI_API_KEY", provider="OpenAI")
+        if self.api_key or not is_local_url(self.base_url):
+            validate_api_key(
+                self.api_key,
+                env_key="LLM_API_KEY",
+                provider="openai_compatible",
+            )
 
     def _validate_transport_security(self, allow_insecure_http: bool) -> None:
         validate_transport_security(
             self.base_url,
-            env_key="OPENAI_BASE_URL",
+            env_key="LLM_BASE_URL",
             allow_insecure_http=allow_insecure_http,
         )
+
+
+OpenAIProvider = OpenAICompatibleProvider

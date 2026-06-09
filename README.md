@@ -39,13 +39,12 @@ cp .env.example .env
 | 变量 | 说明 |
 | --- | --- |
 | `WQ_USERNAME` / `WQ_PASSWORD` | WorldQuant Brain 账号 |
-| `LLM_PROVIDER` | `openai`、`kimi` 或 `deepseek` |
-| `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` | OpenAI / ChatGPT / OpenAI-compatible API 地址、密钥和模型名 |
-| `OPENAI_WIRE_API` | `auto`、`responses` 或 `chat_completions`；`auto` 优先 Responses，不支持时回退 Chat Completions |
-| `OPENAI_REASONING_EFFORT` / `OPENAI_STORE` | 可选 reasoning effort；默认 `OPENAI_STORE=false` 禁用响应存储 |
-| `OPENAI_ALLOW_INSECURE_HTTP` | 非本地 HTTP 端点默认拒绝；仅信任远程 HTTP 私有端点时设为 `true` |
-| `OPENAI_CHAT_TOKEN_PARAM` / `OPENAI_CHAT_REASONING_EFFORT` | Chat Completions 兼容开关；必要时使用 `max_completion_tokens` 或发送 `reasoning_effort` |
-| `KIMI_API_KEY` / `DEEPSEEK_API_KEY` | Kimi / DeepSeek 服务密钥（仅切换到对应 provider 时需要） |
+| `LLM_PROVIDER` | `openai_compatible` 或 `anthropic`；旧值 `openai` / `kimi` / `deepseek` 仍作为兼容别名 |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 协议 provider 的 API 根地址、密钥和模型名；模型名按用户配置原样透传 |
+| `LLM_WIRE_API` | `auto`、`responses` 或 `chat_completions`；仅 `openai_compatible` 使用 |
+| `LLM_REASONING_EFFORT` / `LLM_STORE` | 可选 reasoning / store 参数；留空或 false 时不发送，兼容更多代理 |
+| `LLM_ALLOW_INSECURE_HTTP` | 非本地 HTTP 端点默认拒绝；仅信任远程 HTTP 私有端点时设为 `true` |
+| `LLM_CHAT_TOKEN_PARAM` / `LLM_CHAT_REASONING_EFFORT` | Chat Completions 兼容开关；必要时使用 `max_completion_tokens` 或发送 `reasoning_effort` |
 | `WQ_REGION` / `WQ_UNIVERSE` / `WQ_DELAY` / `WQ_NEUTRALIZATION` | 回测参数 |
 | `MIN_FITNESS` / `MIN_SHARPE` / `MAX_TURNOVER` / `MIN_RETURNS` | 评级阈值 |
 | `WQ_MAX_CONCURRENT` | Simulation 并发数 |
@@ -55,19 +54,30 @@ cp .env.example .env
 OpenAI-compatible 示例：
 
 ```env
-LLM_PROVIDER=openai
-OPENAI_BASE_URL=http://127.0.0.1:8080
-OPENAI_API_KEY=your_key
-OPENAI_MODEL=gpt-5.4
-OPENAI_WIRE_API=auto
-OPENAI_REASONING_EFFORT=
-OPENAI_STORE=false
-OPENAI_ALLOW_INSECURE_HTTP=false
-OPENAI_CHAT_TOKEN_PARAM=max_tokens
-OPENAI_CHAT_REASONING_EFFORT=false
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=http://127.0.0.1:8080
+LLM_API_KEY=
+LLM_MODEL=gpt-5.4
+LLM_WIRE_API=auto
+LLM_REASONING_EFFORT=
+LLM_STORE=false
+LLM_ALLOW_INSECURE_HTTP=false
+LLM_CHAT_TOKEN_PARAM=max_tokens
+LLM_CHAT_REASONING_EFFORT=false
 ```
 
-`OPENAI_BASE_URL` 可以填官方 `https://api.openai.com/v1`，也可以填本地代理根地址。`OPENAI_WIRE_API=auto` 会先请求 `/v1/responses`，如果代理不支持 Responses API，再自动回退到 `/v1/chat/completions`。为避免密钥明文传输，非本地 `http://` 端点默认拒绝；本地 `localhost` / `127.0.0.1` 代理可直接使用。
+`openai_compatible` 覆盖 OpenAI、DeepSeek、Kimi-compatible endpoints、OpenRouter、LiteLLM 和本地代理。`LLM_BASE_URL` 建议填 API root，例如 `https://api.openai.com/v1`；兼容层也接受完整 `/chat/completions` 或 `/responses` endpoint。`LLM_WIRE_API=auto` 会先请求 `/v1/responses`，如果代理不支持 Responses API，再自动回退到 `/v1/chat/completions`。非本地 `http://` 端点默认拒绝；本地 `localhost` / `127.0.0.1` 代理可以不填 `LLM_API_KEY`，此时不会发送 `Authorization`。
+
+Anthropic 示例：
+
+```env
+LLM_PROVIDER=anthropic
+LLM_BASE_URL=https://api.anthropic.com
+LLM_API_KEY=your_anthropic_key
+LLM_MODEL=claude-3-5-sonnet-latest
+```
+
+旧的 `OPENAI_*`、`KIMI_*`、`DEEPSEEK_*` 配置仍会被读取，用于兼容已有 `.env`；新配置优先使用通用 `LLM_*` 字段。
 
 ## 使用
 
