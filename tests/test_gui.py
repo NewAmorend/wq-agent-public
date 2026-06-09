@@ -25,7 +25,7 @@ from wq_agent.gui.server import (
     _redact,
     STATIC_DIR,
 )
-from wq_agent.llm.factory import LLM_PROVIDER_OPTIONS
+from wq_agent.llm.factory import PROTOCOL_PROVIDER_OPTIONS
 from http.server import ThreadingHTTPServer
 
 
@@ -52,8 +52,8 @@ def test_env_snapshot_initializes_from_example_and_masks_secret(tmp_path):
     (tmp_path / ".env.example").write_text(
         "\n".join(
             [
-                "OPENAI_API_KEY=secret-value",
-                "OPENAI_MODEL=gpt-5.4",
+                "LLM_API_KEY=secret-value",
+                "LLM_MODEL=gpt-5.4",
                 "WQ_USERNAME=alice",
                 "WQ_PASSWORD=wq-secret",
             ]
@@ -67,9 +67,9 @@ def test_env_snapshot_initializes_from_example_and_masks_secret(tmp_path):
     values = {field["key"]: field for field in snapshot["fields"]}
 
     assert (tmp_path / ".env").exists()
-    assert values["OPENAI_API_KEY"]["value"] == MASKED_SECRET
-    assert values["OPENAI_API_KEY"]["has_value"] is True
-    assert values["OPENAI_MODEL"]["value"] == "gpt-5.4"
+    assert values["LLM_API_KEY"]["value"] == MASKED_SECRET
+    assert values["LLM_API_KEY"]["has_value"] is True
+    assert values["LLM_MODEL"]["value"] == "gpt-5.4"
     assert values["WQ_PASSWORD"]["value"] == MASKED_SECRET
 
 
@@ -77,8 +77,8 @@ def test_env_snapshot_uses_runtime_defaults_and_ignores_placeholder_secrets(tmp_
     (tmp_path / ".env.example").write_text(
         "\n".join(
             [
-                "LLM_PROVIDER=deepseek",
-                "DEEPSEEK_API_KEY=your_deepseek_key",
+                "LLM_PROVIDER=openai_compatible",
+                "LLM_API_KEY=your_openai_or_proxy_key",
             ]
         )
         + "\n",
@@ -89,10 +89,10 @@ def test_env_snapshot_uses_runtime_defaults_and_ignores_placeholder_secrets(tmp_
     snapshot = manager.snapshot()
     values = {field["key"]: field for field in snapshot["fields"]}
 
-    assert values["DEEPSEEK_API_KEY"]["value"] == ""
-    assert values["DEEPSEEK_API_KEY"]["has_value"] is False
-    assert values["DEEPSEEK_BASE_URL"]["value"] == "https://api.deepseek.com/v1/chat/completions"
-    assert values["DEEPSEEK_MODEL"]["value"] == "deepseek-chat"
+    assert values["LLM_API_KEY"]["value"] == ""
+    assert values["LLM_API_KEY"]["has_value"] is False
+    assert values["LLM_BASE_URL"]["value"] == "https://api.openai.com/v1"
+    assert values["LLM_MODEL"]["value"] == ""
     assert values["LLM_MAX_TOKENS"]["value"] == "32768"
 
 
@@ -100,7 +100,7 @@ def test_env_snapshot_treats_common_placeholder_secrets_as_empty(tmp_path):
     (tmp_path / ".env").write_text(
         "\n".join(
             [
-                "OPENAI_API_KEY=change_me",
+                "LLM_API_KEY=change_me",
                 "KIMI_API_KEY=placeholder",
                 "DEEPSEEK_API_KEY=todo-fill-me",
             ]
@@ -111,14 +111,14 @@ def test_env_snapshot_treats_common_placeholder_secrets_as_empty(tmp_path):
 
     values = {field["key"]: field for field in EnvManager(tmp_path).snapshot()["fields"]}
 
-    assert values["OPENAI_API_KEY"]["has_value"] is False
-    assert values["KIMI_API_KEY"]["has_value"] is False
-    assert values["DEEPSEEK_API_KEY"]["has_value"] is False
+    assert values["LLM_API_KEY"]["has_value"] is False
+    assert "KIMI_API_KEY" not in values
+    assert "DEEPSEEK_API_KEY" not in values
 
 
 def test_env_snapshot_and_settings_accept_utf8_bom_env_files(tmp_path):
     (tmp_path / ".env.example").write_text(
-        "LLM_PROVIDER=deepseek\nOPENAI_MODEL=gpt-5.4\n",
+        "LLM_PROVIDER=anthropic\nLLM_MODEL=claude-custom\n",
         encoding="utf-8-sig",
     )
 
@@ -127,62 +127,62 @@ def test_env_snapshot_and_settings_accept_utf8_bom_env_files(tmp_path):
     values = {field["key"]: field for field in snapshot["fields"]}
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
 
-    assert values["LLM_PROVIDER"]["value"] == "deepseek"
+    assert values["LLM_PROVIDER"]["value"] == "anthropic"
     assert not env_text.startswith("\ufeff")
 
     settings = Settings(_env_file=str(tmp_path / ".env"))
-    assert settings.LLM_PROVIDER == "deepseek"
+    assert settings.LLM_PROVIDER == "anthropic"
 
 
 def test_env_save_preserves_masked_secret_and_updates_plain_fields(tmp_path):
     (tmp_path / ".env").write_text(
-        "OPENAI_API_KEY=secret-value\nOPENAI_MODEL=gpt-5.4\nWQ_USERNAME=alice\n",
+        "LLM_API_KEY=secret-value\nLLM_MODEL=gpt-5.4\nWQ_USERNAME=alice\n",
         encoding="utf-8",
     )
     manager = EnvManager(tmp_path)
 
     manager.save(
         {
-            "OPENAI_API_KEY": MASKED_SECRET,
-            "OPENAI_MODEL": "gpt-5.5",
+            "LLM_API_KEY": MASKED_SECRET,
+            "LLM_MODEL": "gpt-5.5",
             "WQ_USERNAME": "bob",
         }
     )
 
     text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert "OPENAI_API_KEY=secret-value" in text
-    assert "OPENAI_MODEL=gpt-5.5" in text
+    assert "LLM_API_KEY=secret-value" in text
+    assert "LLM_MODEL=gpt-5.5" in text
     assert "WQ_USERNAME=bob" in text
 
 
 def test_env_save_can_clear_secret_explicitly(tmp_path):
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=secret-value\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("LLM_API_KEY=secret-value\n", encoding="utf-8")
 
-    snapshot = EnvManager(tmp_path).save({"OPENAI_API_KEY": CLEAR_SECRET_VALUE})
+    snapshot = EnvManager(tmp_path).save({"LLM_API_KEY": CLEAR_SECRET_VALUE})
     values = {field["key"]: field for field in snapshot["fields"]}
     text = (tmp_path / ".env").read_text(encoding="utf-8")
 
-    assert "OPENAI_API_KEY=" in text
-    assert values["OPENAI_API_KEY"]["has_value"] is False
+    assert "LLM_API_KEY=" in text
+    assert values["LLM_API_KEY"]["has_value"] is False
 
 
 def test_env_save_deduplicates_keys_and_quotes_special_values(tmp_path):
     (tmp_path / ".env").write_text(
-        "OPENAI_MODEL=old\nOPENAI_MODEL=older\nOPENAI_BASE_URL=https://api.openai.com/v1\n",
+        "LLM_MODEL=old\nLLM_MODEL=older\nLLM_BASE_URL=https://api.openai.com/v1\n",
         encoding="utf-8",
     )
     manager = EnvManager(tmp_path)
 
-    manager.save({"OPENAI_MODEL": "gpt custom", "OPENAI_BASE_URL": "https://proxy.example/v1"})
+    manager.save({"LLM_MODEL": "gpt custom", "LLM_BASE_URL": "https://proxy.example/v1"})
 
     text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert text.count("OPENAI_MODEL=") == 1
-    assert 'OPENAI_MODEL="gpt custom"' in text
-    assert "OPENAI_BASE_URL=https://proxy.example/v1" in text
+    assert text.count("LLM_MODEL=") == 1
+    assert 'LLM_MODEL="gpt custom"' in text
+    assert "LLM_BASE_URL=https://proxy.example/v1" in text
 
 
 def test_env_save_rejects_invalid_select_number_and_accepts_custom_model(tmp_path):
-    (tmp_path / ".env").write_text("LLM_PROVIDER=deepseek\nLLM_MODEL=\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("LLM_PROVIDER=openai_compatible\nLLM_MODEL=\n", encoding="utf-8")
     manager = EnvManager(tmp_path)
 
     with pytest.raises(ValueError, match="LLM_WIRE_API"):
@@ -194,8 +194,8 @@ def test_env_save_rejects_invalid_select_number_and_accepts_custom_model(tmp_pat
     with pytest.raises(ValueError, match="WQ_MAX_CONCURRENT"):
         manager.save({"WQ_MAX_CONCURRENT": "999"})
 
-    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        manager.save({"OPENAI_API_KEY": "placeholder"})
+    with pytest.raises(ValueError, match="LLM_API_KEY"):
+        manager.save({"LLM_API_KEY": "placeholder"})
 
     manager.save({"LLM_MODEL": "private-proxy-model"})
     assert "LLM_MODEL=private-proxy-model" in (tmp_path / ".env").read_text(encoding="utf-8")
@@ -204,11 +204,19 @@ def test_env_save_rejects_invalid_select_number_and_accepts_custom_model(tmp_pat
 def test_config_model_options_stay_in_sync_with_factory_and_frontend():
     field_map = {field.key: field for field in CONFIG_FIELDS}
 
-    assert set(field_map["LLM_PROVIDER"].options) == set(LLM_PROVIDER_OPTIONS)
+    assert field_map["LLM_PROVIDER"].options == PROTOCOL_PROVIDER_OPTIONS
+    assert "openai" not in field_map["LLM_PROVIDER"].options
+    assert "kimi" not in field_map["LLM_PROVIDER"].options
+    assert "deepseek" not in field_map["LLM_PROVIDER"].options
     assert field_map["LLM_MODEL"].kind == "text"
+    assert "OPENAI_MODEL" not in field_map
+    assert "KIMI_MODEL" not in field_map
+    assert "DEEPSEEK_MODEL" not in field_map
 
     app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
     assert "GLOBAL_MODEL_OPTIONS" not in app_js
+    assert "PROVIDER_MODEL_KEYS" not in app_js
+    assert "PROVIDER_SECRET_KEYS" not in app_js
 
 
 def test_build_cli_command_for_generate_and_backtest():
@@ -376,11 +384,11 @@ def test_job_manager_cancel_marks_job_cancelled(tmp_path):
 
 
 def test_http_post_requires_csrf_token_and_allows_valid_token(tmp_path):
-    (tmp_path / ".env.example").write_text("OPENAI_MODEL=gpt-5.4\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("LLM_MODEL=gpt-5.4\n", encoding="utf-8")
     state, server, thread = _start_test_server(tmp_path)
     try:
         url = f"http://127.0.0.1:{state.port}/api/config"
-        body = json.dumps({"values": {"OPENAI_MODEL": "gpt-test"}}).encode("utf-8")
+        body = json.dumps({"values": {"LLM_MODEL": "gpt-test"}}).encode("utf-8")
         request = urllib.request.Request(
             url,
             data=body,
@@ -405,13 +413,13 @@ def test_http_post_requires_csrf_token_and_allows_valid_token(tmp_path):
         )
         with _open(request) as response:
             assert response.status == 200
-        assert "OPENAI_MODEL=gpt-test" in (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "LLM_MODEL=gpt-test" in (tmp_path / ".env").read_text(encoding="utf-8")
     finally:
         _stop_test_server(server, thread)
 
 
 def test_http_get_api_requires_csrf_after_meta_and_sends_security_headers(tmp_path):
-    (tmp_path / ".env.example").write_text("OPENAI_MODEL=gpt-5.4\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("LLM_MODEL=gpt-5.4\n", encoding="utf-8")
     state, server, thread = _start_test_server(tmp_path)
     try:
         meta_request = urllib.request.Request(f"http://127.0.0.1:{state.port}/api/meta")

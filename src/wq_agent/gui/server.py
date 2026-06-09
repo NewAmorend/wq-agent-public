@@ -23,7 +23,7 @@ from dotenv import dotenv_values
 
 from ..config import Settings
 from ..db import Database
-from ..llm.factory import LLM_PROVIDER_OPTIONS
+from ..llm.factory import PROTOCOL_PROVIDER_OPTIONS
 from ..llm.security import is_real_secret
 
 
@@ -70,7 +70,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         "LLM Provider",
         "模型",
         kind="select",
-        options=tuple(LLM_PROVIDER_OPTIONS),
+        options=tuple(PROTOCOL_PROVIDER_OPTIONS),
     ),
     ConfigField("LLM_BASE_URL", "LLM API 地址", "模型"),
     ConfigField("LLM_API_KEY", "LLM API 密钥", "模型", secret=True, kind="password"),
@@ -95,33 +95,6 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ),
     ConfigField("LLM_CHAT_REASONING_EFFORT", "Chat Reasoning 参数", "模型", kind="boolean"),
     ConfigField("ANTHROPIC_VERSION", "Anthropic Version", "模型"),
-    ConfigField("OPENAI_BASE_URL", "Legacy OpenAI API 地址", "兼容旧配置"),
-    ConfigField("OPENAI_API_KEY", "Legacy OpenAI API 密钥", "兼容旧配置", secret=True, kind="password"),
-    ConfigField("OPENAI_MODEL", "Legacy OpenAI 模型", "兼容旧配置"),
-    ConfigField("OPENAI_WIRE_API", "Legacy OpenAI Wire API", "兼容旧配置", kind="select", options=("auto", "responses", "chat_completions")),
-    ConfigField(
-        "OPENAI_REASONING_EFFORT",
-        "Legacy OpenAI Reasoning",
-        "兼容旧配置",
-        kind="select",
-        options=("", "none", "minimal", "low", "medium", "high", "xhigh"),
-    ),
-    ConfigField("OPENAI_STORE", "Legacy OpenAI Store", "兼容旧配置", kind="boolean"),
-    ConfigField("OPENAI_ALLOW_INSECURE_HTTP", "Legacy OpenAI HTTP", "兼容旧配置", kind="boolean"),
-    ConfigField(
-        "OPENAI_CHAT_TOKEN_PARAM",
-        "Legacy OpenAI Chat Token",
-        "兼容旧配置",
-        kind="select",
-        options=("max_tokens", "max_completion_tokens"),
-    ),
-    ConfigField("OPENAI_CHAT_REASONING_EFFORT", "Legacy OpenAI Chat Reasoning", "兼容旧配置", kind="boolean"),
-    ConfigField("KIMI_API_KEY", "Legacy Kimi API 密钥", "兼容旧配置", secret=True, kind="password"),
-    ConfigField("KIMI_BASE_URL", "Legacy Kimi API 地址", "兼容旧配置"),
-    ConfigField("KIMI_MODEL", "Legacy Kimi 模型", "兼容旧配置"),
-    ConfigField("DEEPSEEK_API_KEY", "Legacy DeepSeek API 密钥", "兼容旧配置", secret=True, kind="password"),
-    ConfigField("DEEPSEEK_BASE_URL", "Legacy DeepSeek API 地址", "兼容旧配置"),
-    ConfigField("DEEPSEEK_MODEL", "Legacy DeepSeek 模型", "兼容旧配置"),
     ConfigField("WQ_USERNAME", "WQ 用户名", "WorldQuant"),
     ConfigField("WQ_PASSWORD", "WQ 密码", "WorldQuant", secret=True, kind="password"),
     ConfigField("WQ_REGION", "Region", "WorldQuant"),

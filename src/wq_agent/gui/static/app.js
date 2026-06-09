@@ -241,13 +241,8 @@ async function saveConfig() {
 function renderConfigStatus(fields) {
   const byKey = Object.fromEntries(fields.map((field) => [field.key, field]));
   const provider = String(byKey.LLM_PROVIDER?.value || "openai_compatible").toLowerCase();
-  const model = byKey.LLM_MODEL?.value || byKey.OPENAI_MODEL?.value || "";
-  const apiKeyConfigured = Boolean(
-    byKey.LLM_API_KEY?.has_value ||
-    byKey.OPENAI_API_KEY?.has_value ||
-    byKey.KIMI_API_KEY?.has_value ||
-    byKey.DEEPSEEK_API_KEY?.has_value
-  );
+  const model = byKey.LLM_MODEL?.value || "";
+  const apiKeyConfigured = Boolean(byKey.LLM_API_KEY?.has_value);
   const checks = [
     ["模型供应商", Boolean(provider)],
     ["模型密钥", apiKeyConfigured],
