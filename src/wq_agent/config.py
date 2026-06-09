@@ -29,11 +29,6 @@ class Settings(BaseSettings):
     LLM_GEN_TEMPERATURE: float = 0.5
     ANTHROPIC_VERSION: str = "2023-06-01"
     KIMI_API_KEY: str = ""
-    KIMI_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
-    KIMI_MODEL: str = "kimi-k2.6"
-    DEEPSEEK_API_KEY: str = ""
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1/chat/completions"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
 
     # WQ Brain 官方提交阈值（USA TOP3000 delay=1，截至 2026-05）。
     # 评估器优先使用 WQ 自带的 checks 列表；下面这组只在 checks 缺失时作为 fallback。
