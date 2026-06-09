@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from ..config import Settings
 from .anthropic import AnthropicProvider
 from .base import BaseLLMProvider
-from .openai import OpenAICompatibleProvider
+from .openai_compatible import OpenAICompatibleProvider
 
 
 PROTOCOL_PROVIDERS = ("openai_compatible", "anthropic")
@@ -101,6 +101,12 @@ def _int_setting(settings, key: str) -> int:
 
 def _anthropic_base_url(settings) -> str:
     base_url = _explicit_text(settings, "LLM_BASE_URL")
-    if not base_url or base_url == _settings_default("LLM_BASE_URL"):
+    if not base_url or _normalize_base_url(base_url) == _normalize_base_url(
+        _settings_default("LLM_BASE_URL")
+    ):
         return ANTHROPIC_BASE_URL
     return base_url
+
+
+def _normalize_base_url(value: str) -> str:
+    return value.strip().rstrip("/").lower()

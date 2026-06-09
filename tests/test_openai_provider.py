@@ -329,6 +329,19 @@ def test_factory_uses_anthropic_default_when_env_example_base_url_is_unchanged()
     assert provider.base_url == "https://api.anthropic.com"
 
 
+def test_factory_treats_openai_default_with_trailing_slash_as_anthropic_default():
+    provider = LLMFactory.from_settings(
+        _settings(
+            LLM_PROVIDER="anthropic",
+            LLM_API_KEY="test-key",
+            LLM_BASE_URL="https://api.openai.com/v1/",
+        )
+    )
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.base_url == "https://api.anthropic.com"
+
+
 def test_factory_respects_explicit_anthropic_base_url():
     provider = LLMFactory.from_settings(
         _settings(

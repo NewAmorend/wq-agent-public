@@ -1,6 +1,6 @@
-from .base import BaseLLMProvider
+﻿from .base import BaseLLMProvider
 from .anthropic import AnthropicProvider
-from .openai import OpenAICompatibleProvider
+from .openai_compatible import OpenAICompatibleProvider
 from .factory import LLMFactory
 
 __all__ = [
