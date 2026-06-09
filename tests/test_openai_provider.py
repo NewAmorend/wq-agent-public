@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from wq_agent.config import Settings
-from wq_agent.llm import AnthropicProvider, LLMFactory, OpenAICompatibleProvider, OpenAIProvider
+from wq_agent.llm import AnthropicProvider, LLMFactory, OpenAICompatibleProvider
+from wq_agent.llm.factory import PROTOCOL_PROVIDER_OPTIONS
 
 
 class _Resp:
@@ -47,9 +48,13 @@ def _provider(
     )
 
 
+def _settings(**values) -> Settings:
+    return Settings(_env_file=None, **values)
+
+
 def test_factory_creates_openai_compatible_provider_from_protocol_settings():
     provider = LLMFactory.from_settings(
-        Settings(
+        _settings(
             LLM_PROVIDER="openai_compatible",
             LLM_API_KEY="test-key",
             LLM_BASE_URL="http://127.0.0.1:8080",
@@ -59,59 +64,32 @@ def test_factory_creates_openai_compatible_provider_from_protocol_settings():
     )
 
     assert isinstance(provider, OpenAICompatibleProvider)
-    assert isinstance(provider, OpenAIProvider)
     assert provider.default_model == "my-private-model"
     assert provider.wire_api == "responses"
 
 
-def test_factory_maps_legacy_brand_aliases_to_openai_compatible_presets():
-    openai = LLMFactory.from_settings(
-        Settings(
-            LLM_PROVIDER="openai",
-            OPENAI_API_KEY="test-key",
-            OPENAI_BASE_URL="http://127.0.0.1:8080",
-            OPENAI_MODEL="gpt-anything",
-        )
-    )
-    assert isinstance(openai, OpenAICompatibleProvider)
-    assert openai.base_url == "http://127.0.0.1:8080"
-    assert openai.default_model == "gpt-anything"
+def test_factory_exposes_only_protocol_provider_options():
+    assert PROTOCOL_PROVIDER_OPTIONS == ("openai_compatible", "anthropic")
+    assert "openai" not in PROTOCOL_PROVIDER_OPTIONS
+    assert "kimi" not in PROTOCOL_PROVIDER_OPTIONS
+    assert "deepseek" not in PROTOCOL_PROVIDER_OPTIONS
 
-    kimi = LLMFactory.from_settings(
-        Settings(
-            LLM_PROVIDER="kimi",
-            LLM_MAX_TOKENS=777,
-            KIMI_API_KEY="test-key",
-            KIMI_BASE_URL="",
-            KIMI_MODEL="kimi-custom",
-        )
-    )
-    assert isinstance(kimi, OpenAICompatibleProvider)
-    assert kimi.base_url == "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
-    assert kimi.default_model == "kimi-custom"
-    assert kimi.default_max_tokens == 777
 
-    deepseek = LLMFactory.from_settings(
-        Settings(
-            LLM_PROVIDER="deepseek",
-            LLM_MAX_TOKENS=888,
-            DEEPSEEK_API_KEY="test-key",
-            DEEPSEEK_BASE_URL="",
-            DEEPSEEK_MODEL="deepseek-new-model",
-        )
-    )
-    assert isinstance(deepseek, OpenAICompatibleProvider)
-    assert deepseek.base_url == "https://api.deepseek.com/v1/chat/completions"
-    assert deepseek.default_model == "deepseek-new-model"
-    assert deepseek.default_max_tokens == 888
+@pytest.mark.parametrize("provider", ["openai", "kimi", "deepseek"])
+def test_factory_rejects_brand_provider_names(provider: str):
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        LLMFactory.from_settings(_settings(LLM_PROVIDER=provider))
+
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        LLMFactory.create(provider)
 
 
 def test_factory_passes_custom_global_model_without_allowlist_validation():
     provider = LLMFactory.from_settings(
-        Settings(
-            LLM_PROVIDER="deepseek",
+        _settings(
+            LLM_PROVIDER="openai_compatible",
             LLM_MODEL="private-proxy-model",
-            DEEPSEEK_API_KEY="test-key",
+            LLM_API_KEY="test-key",
         )
     )
 
@@ -326,7 +304,7 @@ async def test_anthropic_messages_payload_headers_and_text_parsing():
 
 def test_factory_creates_anthropic_provider():
     provider = LLMFactory.from_settings(
-        Settings(
+        _settings(
             LLM_PROVIDER="anthropic",
             LLM_API_KEY="test-key",
             LLM_MODEL="claude-custom",
@@ -338,9 +316,22 @@ def test_factory_creates_anthropic_provider():
     assert provider.default_model == "claude-custom"
 
 
+def test_factory_uses_anthropic_default_when_env_example_base_url_is_unchanged():
+    provider = LLMFactory.from_settings(
+        _settings(
+            LLM_PROVIDER="anthropic",
+            LLM_API_KEY="test-key",
+            LLM_BASE_URL="https://api.openai.com/v1",
+        )
+    )
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.base_url == "https://api.anthropic.com"
+
+
 def test_factory_respects_explicit_anthropic_base_url():
     provider = LLMFactory.from_settings(
-        Settings(
+        _settings(
             LLM_PROVIDER="anthropic",
             LLM_API_KEY="test-key",
             LLM_BASE_URL="https://anthropic-proxy.example",

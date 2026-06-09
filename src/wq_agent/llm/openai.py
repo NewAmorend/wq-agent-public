@@ -235,6 +235,3 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             env_key="LLM_BASE_URL",
             allow_insecure_http=allow_insecure_http,
         )
-
-
-OpenAIProvider = OpenAICompatibleProvider
