@@ -72,6 +72,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         kind="select",
         options=(
             "",
+            "gpt-5.5",
             "gpt-5.4",
             "gpt-5.4-mini",
             "gpt-5.3-codex",
@@ -88,7 +89,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         "OpenAI 默认模型",
         "模型",
         kind="select",
-        options=("", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"),
+        options=("", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"),
         allow_custom=True,
     ),
     ConfigField("OPENAI_WIRE_API", "回复模式", "模型", kind="select", options=("auto", "responses", "chat_completions")),

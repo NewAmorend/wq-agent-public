@@ -6,7 +6,7 @@ const state = {
 };
 const CLEAR_SECRET_VALUE = "__clear_secret__";
 const GLOBAL_MODEL_OPTIONS = {
-  openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
+  openai: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
   kimi: ["kimi-k2.6"],
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
 };

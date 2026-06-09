@@ -250,6 +250,48 @@ def test_build_cli_command_for_generate_and_backtest():
     assert backtest == ["backtest", "--concurrent", "3", "--ids", "1,2,3"]
 
 
+@pytest.mark.parametrize(
+    ("action", "payload", "expected"),
+    [
+        (
+            "generate",
+            {"strategy": "llm", "count": 2, "idea": "  ", "no_backtest": False},
+            ["generate", "--strategy", "llm", "--count", "2"],
+        ),
+        (
+            "generate",
+            {"strategy": "factor_mining", "count": 1, "idea": "low turnover", "verbose": True},
+            [
+                "generate",
+                "--strategy",
+                "factor_mining",
+                "--count",
+                "1",
+                "--idea",
+                "low turnover",
+                "--verbose",
+            ],
+        ),
+        (
+            "backtest",
+            {"mode": "pending", "concurrent": 4},
+            ["backtest", "--concurrent", "4", "--pending"],
+        ),
+        (
+            "backtest",
+            {"mode": "all", "concurrent": 2, "verbose": True},
+            ["backtest", "--concurrent", "2", "--all", "--verbose"],
+        ),
+    ],
+)
+def test_gui_cli_command_regression_preserves_generate_backtest_contract(
+    action,
+    payload,
+    expected,
+):
+    assert build_cli_command(action, payload) == expected
+
+
 def test_submit_commands_are_not_gui_safe_actions():
     assert "submit" not in SAFE_ACTIONS
     assert "sync-submitted" not in SAFE_ACTIONS
