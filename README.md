@@ -124,7 +124,8 @@ wq-agent gui --host 127.0.0.1 --port 8765 --open-browser
 
 GUI 会打开本地网页控制台，支持：
 
-- 编辑 `.env` 中的 OpenAI-compatible API、WQ Brain、回测和本地数据库配置；
+- 编辑 `.env` 中的协议级 LLM、WQ Brain、回测和本地数据库配置；
+- `LLM_PROVIDER` 只展示 `openai_compatible` / `anthropic`，第三方兼容端点通过 `LLM_BASE_URL` 与 `LLM_MODEL` 配置；
 - 运行 `generate` / `run` / `backtest` / `refine`；
 - 查看任务日志、状态统计、最近 alpha 和可提交候选；
 - 一次只运行一个长任务，避免并发误操作。
