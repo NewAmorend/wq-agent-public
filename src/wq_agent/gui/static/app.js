@@ -159,7 +159,7 @@ function configField(field) {
   if (field.kind === "select") {
     const options = Array.isArray(field.options) ? [...field.options] : [];
     const current = field.value || "";
-    if (current && !options.includes(current)) {
+    if (field.key !== "LLM_PROVIDER" && current && !options.includes(current)) {
       options.push(current);
     }
     options.forEach((option) => {
@@ -168,7 +168,7 @@ function configField(field) {
       optionEl.textContent = option || "使用供应商默认";
       input.appendChild(optionEl);
     });
-    input.value = current;
+    input.value = options.includes(current) ? current : options[0] || "";
   } else {
     input.value = field.secret ? "" : field.value || "";
     input.placeholder = field.secret && field.has_value ? "已设置，留空保持不变" : "";

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import http.client
 import json
+import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -215,6 +217,71 @@ def test_config_model_options_stay_in_sync_with_factory_and_frontend():
     assert "GLOBAL_MODEL_OPTIONS" not in app_js
     assert "PROVIDER_MODEL_KEYS" not in app_js
     assert "PROVIDER_SECRET_KEYS" not in app_js
+
+
+def test_frontend_provider_select_does_not_add_legacy_current_value(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior coverage")
+
+    script = tmp_path / "provider_options_test.js"
+    script.write_text(
+        r"""
+const assert = require("assert");
+const fs = require("fs");
+const vm = require("vm");
+
+class Element {
+  constructor(tag) {
+    this.tagName = tag.toUpperCase();
+    this.children = [];
+    this.dataset = {};
+    this.classList = { add() {} };
+    this.attributes = {};
+    this.value = "";
+    this.textContent = "";
+  }
+  appendChild(child) { this.children.push(child); return child; }
+  addEventListener() {}
+  setAttribute(key, value) { this.attributes[key] = value; }
+}
+
+const context = {
+  document: {
+    addEventListener() {},
+    createElement(tag) { return new Element(tag); },
+    getElementById() { return null; },
+  },
+  window: { setTimeout() {} },
+};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), context, { filename: "app.js" });
+
+const field = {
+  key: "LLM_PROVIDER",
+  label: "LLM Provider",
+  section: "模型",
+  kind: "select",
+  options: ["openai_compatible", "anthropic"],
+  value: "openai",
+};
+const label = context.configField(field);
+const select = label.children.find((child) => child.tagName === "SELECT");
+assert.ok(select);
+assert.deepStrictEqual(select.children.map((option) => option.value), ["openai_compatible", "anthropic"]);
+assert.strictEqual(select.value, "openai_compatible");
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [node, str(script), str(STATIC_DIR / "app.js")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
 
 
 def test_build_cli_command_for_generate_and_backtest():
