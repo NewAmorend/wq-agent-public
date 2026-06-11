@@ -82,6 +82,9 @@ LLM_MODEL=claude-3-5-sonnet-latest
 安装后会注册 `wq-agent` 命令：
 
 ```bash
+# 启动中文本地 Web GUI（默认只绑定 127.0.0.1）
+wq-agent gui
+
 # 全流程：生成 → 回测 → 评估 → 展示
 wq-agent run --strategy llm --count 18 --batches 1
 
@@ -112,6 +115,27 @@ wq-agent diversity
 ### TUI 工作台
 
 `wq-agent tui` 提供一个键盘优先的终端工作台：左侧设置 strategy/count/batches/idea，右侧查看任务日志和最近 alpha。快捷键：`g` 仅生成、`r` 全流程、`f` refine、`b` 回测 pending、`Ctrl+R` 刷新、`q` 退出。
+
+### 中文本地 GUI
+
+```bash
+wq-agent gui --host 127.0.0.1 --port 8765 --open-browser
+```
+
+GUI 会打开本地网页控制台，支持：
+
+- 编辑 `.env` 中的协议级 LLM、WQ Brain、回测和本地数据库配置；
+- `LLM_PROVIDER` 只展示 `openai_compatible` / `anthropic`，第三方兼容端点通过 `LLM_BASE_URL` 与 `LLM_MODEL` 配置；
+- 运行 `generate` / `run` / `backtest` / `refine`；
+- 查看任务日志、状态统计、最近 alpha 和可提交候选；
+- 一次只运行一个长任务，避免并发误操作。
+
+安全边界：
+
+- GUI 只跑 simulation / checks，不会正式提交因子；
+- GUI 不提供 `submit` / `sync-submitted` 按钮；
+- `.env` 不存在时会从 `.env.example` 初始化，真实密钥仍由 `.gitignore` 保护，不会提交到 git；
+- 密钥字段默认隐藏，留空或保持遮罩时不会覆盖原值。
 
 ### 减少 alpha 重复性
 
@@ -305,6 +329,6 @@ EMBEDDING_DIM=2048
 ## 开发
 
 ```bash
-ruff check src tests
-pytest
+.venv\Scripts\python.exe -m ruff check src tests
+.venv\Scripts\python.exe -m pytest
 ```

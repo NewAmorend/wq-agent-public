@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>wq-agent 本地控制台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">WQ</div>
+          <div>
+            <h1>wq-agent</h1>
+            <p>本地控制台</p>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-btn active" data-tab="run">运行</button>
+          <button class="nav-btn" data-tab="config">配置</button>
+          <button class="nav-btn" data-tab="results">结果</button>
+          <button class="nav-btn" data-tab="logs">日志</button>
+        </nav>
+
+        <section class="side-section">
+          <h2>安全状态</h2>
+          <p class="safe-note">仅运行 simulation / checks，不会正式提交因子。</p>
+          <div class="status-list" id="configStatus"></div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyeline" id="workspacePath">正在读取工作目录...</p>
+            <h2>WorldQuant Alpha 生成与回测</h2>
+          </div>
+          <div class="job-pill" id="jobPill">空闲</div>
+        </header>
+
+        <section class="tab-panel active" id="tab-run">
+          <div class="grid two">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>生成 Alpha</h3>
+                <button class="primary" id="btnGenerate">开始生成</button>
+              </div>
+              <div class="form-grid">
+                <label>
+                  策略
+                  <select id="generateStrategy">
+                    <option value="llm">LLM</option>
+                    <option value="template">Template</option>
+                    <option value="factor_mining">Factor Mining</option>
+                  </select>
+                </label>
+                <label>
+                  数量
+                  <input id="generateCount" type="number" min="1" max="1000" value="18" />
+                </label>
+                <label class="wide">
+                  研究想法
+                  <textarea id="generateIdea" rows="4" placeholder="例如：分析师盈利上修叠加低换手约束，做行业中性 alpha"></textarea>
+                </label>
+                <label class="check-row">
+                  <input id="generateNoBacktest" type="checkbox" />
+                  只生成，不回测
+                </label>
+                <label class="check-row">
+                  <input id="generateVerbose" type="checkbox" />
+                  输出详细日志
+                </label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>完整运行</h3>
+                <button class="primary" id="btnRunFull">生成并回测</button>
+              </div>
+              <div class="form-grid">
+                <label>
+                  策略
+                  <select id="runStrategy">
+                    <option value="llm">LLM</option>
+                    <option value="template">Template</option>
+                    <option value="factor_mining">Factor Mining</option>
+                  </select>
+                </label>
+                <label>
+                  每批数量
+                  <input id="runCount" type="number" min="1" max="1000" value="18" />
+                </label>
+                <label>
+                  批次数
+                  <input id="runBatches" type="number" min="1" max="100" value="1" />
+                </label>
+                <label>
+                  批间隔秒
+                  <input id="runInterval" type="number" min="0" max="1000" value="60" />
+                </label>
+                <label class="wide">
+                  研究想法
+                  <textarea id="runIdea" rows="4"></textarea>
+                </label>
+                <label class="check-row">
+                  <input id="runVerbose" type="checkbox" />
+                  输出详细日志
+                </label>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid two">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>回测队列</h3>
+                <button class="secondary" id="btnBacktest">开始回测</button>
+              </div>
+              <div class="form-grid">
+                <label>
+                  范围
+                  <select id="backtestMode">
+                    <option value="pending">待回测</option>
+                    <option value="all">全部已生成/失败</option>
+                    <option value="ids">指定 ID</option>
+                  </select>
+                </label>
+                <label>
+                  并发
+                  <input id="backtestConcurrent" type="number" min="1" max="20" value="5" />
+                </label>
+                <label class="wide">
+                  指定 ID
+                  <input id="backtestIds" type="text" placeholder="例如：1,2,3" />
+                </label>
+                <label class="check-row">
+                  <input id="backtestVerbose" type="checkbox" />
+                  输出详细日志
+                </label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Refine 近似通过因子</h3>
+                <button class="secondary" id="btnRefine">生成变体</button>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Base ID
+                  <input id="refineBaseId" type="text" placeholder="留空自动选择" />
+                </label>
+                <label>
+                  变体数量
+                  <input id="refineCount" type="number" min="1" max="1000" value="10" />
+                </label>
+                <label class="check-row">
+                  <input id="refineNoBacktest" type="checkbox" />
+                  只生成，不回测
+                </label>
+                <label class="check-row">
+                  <input id="refineVerbose" type="checkbox" />
+                  输出详细日志
+                </label>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-config">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>.env 配置</h3>
+                <p id="envPath" class="muted"></p>
+              </div>
+              <button class="primary" id="btnSaveConfig">保存配置</button>
+            </div>
+            <div id="configForm" class="config-form"></div>
+          </section>
+        </section>
+
+        <section class="tab-panel" id="tab-results">
+          <section class="metrics" id="metrics"></section>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>可提交候选（只读）</h3>
+              <button class="secondary" id="btnRefreshResults">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Fitness</th>
+                    <th>Sharpe</th>
+                    <th>Turnover</th>
+                    <th>Grade</th>
+                    <th>表达式</th>
+                  </tr>
+                </thead>
+                <tbody id="submittableRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>最近 Alpha</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Fitness</th>
+                    <th>Sharpe</th>
+                    <th>Turnover</th>
+                    <th>Grade</th>
+                    <th>表达式</th>
+                  </tr>
+                </thead>
+                <tbody id="recentRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="tab-panel" id="tab-logs">
+          <section class="panel log-panel">
+            <div class="panel-head">
+              <div>
+                <h3>任务日志</h3>
+                <p class="muted" id="jobMeta">暂无任务</p>
+              </div>
+              <button class="danger" id="btnCancelJob" disabled>停止任务</button>
+            </div>
+            <pre id="logOutput">等待任务启动...</pre>
+          </section>
+        </section>
+      </main>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
