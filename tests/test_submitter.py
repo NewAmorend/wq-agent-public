@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import httpx
 import pytest
 
 from wq_agent.config import Settings
@@ -14,6 +15,7 @@ from wq_agent.submitter import (
     parse_sort_spec,
     seconds_until_daily_time,
 )
+from wq_agent.wq.client import WQClient
 
 
 class FakeWQClient:
@@ -123,7 +125,7 @@ async def test_auto_submit_respects_limits_and_keeps_pending_queue(tmp_path):
         assert fake.submitted == ["wq1"]
         assert submitted is not None and submitted.status.value == "submitted"
         assert [row["alpha_id"] for row in pending] == [a2, a3]
-        assert await db.count_submission_successes(date_bucket(timezone=settings.SUBMIT_TIMEZONE)) == 1
+        assert await db.count_submission_attempts(date_bucket(timezone=settings.SUBMIT_TIMEZONE)) == 1
     finally:
         await db.close()
 
@@ -143,13 +145,68 @@ async def test_auto_submit_records_self_correlation_failure_without_marking_subm
         result = await manager.run_once(csv_dir=tmp_path, write_csv=False)
         rejected = await db.list_submission_queue(status="rejected")
         alpha = await db.get_alpha(a1)
+        backtest = await db.get_backtest_result(a1)
 
         assert result.failed == 1
         assert rejected[0]["alpha_id"] == a1
         assert rejected[0]["last_error"] == "SELF_CORRELATION FAIL"
         assert alpha is not None and alpha.status.value != "submitted"
+        assert backtest is not None
+        assert any(
+            c.get("name") == "SELF_CORRELATION" and c.get("result") == "FAIL"
+            for c in (backtest.checks or [])
+        )
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_submit_attempt_consumes_daily_limit(tmp_path):
+    db = Database(str(tmp_path / "wq.db"))
+    await db.connect()
+    try:
+        await _insert_high_alpha(db, "rank(a)", "wq1", sharpe=3.0, fitness=1.5)
+        await _insert_high_alpha(db, "rank(b)", "wq2", sharpe=2.0, fitness=1.4)
+        settings = Settings(_env_file=None, SUBMIT_DAILY_LIMIT=1, SUBMIT_PER_RUN_LIMIT=1)
+        fake = FakeWQClient({"wq1": {"submit_error": "remote rejected"}})
+        manager = SubmissionManager(db, fake, settings)
+
+        first = await manager.run_once(csv_dir=tmp_path, write_csv=False)
+        second = await manager.run_once(csv_dir=tmp_path, write_csv=False)
+
+        assert first.attempted == 1
+        assert first.failed == 1
+        assert second.attempted == 0
+        assert fake.submitted == ["wq1"]
+        assert await db.count_submission_attempts(date_bucket(timezone=settings.SUBMIT_TIMEZONE)) == 1
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_poll_alpha_submission_does_not_mark_unsubmitted_self_corr_pass(monkeypatch):
+    client = WQClient(Settings(_env_file=None))
+
+    async def fake_request(method, path, **kwargs):
+        assert method == "get"
+        return httpx.Response(
+            200,
+            json={
+                "status": "UNSUBMITTED",
+                "is": {"checks": [{"name": "SELF_CORRELATION", "result": "PASS"}]},
+            },
+        )
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    monkeypatch.setattr("wq_agent.wq.client.asyncio.sleep", no_sleep)
+
+    result = await client.poll_alpha_submission("wq1", timeout=0.01, poll_interval=0.01)
+
+    assert result["status"] == "pending"
+    assert result["remote_status"] == "UNSUBMITTED"
 
 
 async def _insert_high_alpha(

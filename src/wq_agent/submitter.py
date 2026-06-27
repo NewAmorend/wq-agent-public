@@ -170,7 +170,7 @@ class SubmissionManager:
             write_csv=write_csv,
         )
         bucket = date_bucket(timezone=self.settings.SUBMIT_TIMEZONE)
-        used_today = await self.db.count_submission_successes(bucket)
+        used_today = await self.db.count_submission_attempts(bucket)
         daily_remaining = max(0, limits.daily_limit - used_today)
         submit_count = min(limits.per_run_limit, daily_remaining)
         if submit_count <= 0:
@@ -187,27 +187,46 @@ class SubmissionManager:
         attempted = succeeded = failed = 0
         rows: list[dict[str, Any]] = []
         for row in queued:
+            result = await self._submit_one(row, limits.daily_limit)
+            if result["result"] == "skipped":
+                rows.append(result)
+                break
             attempted += 1
-            result = await self._submit_one(row, bucket)
             rows.append(result)
             if result["result"] == "success":
                 succeeded += 1
             else:
                 failed += 1
         skipped = await self.db.count_submission_queue(status="pending")
+        current_bucket = date_bucket(timezone=self.settings.SUBMIT_TIMEZONE)
+        used_after = await self.db.count_submission_attempts(current_bucket)
         return SubmissionRunResult(
             attempted=attempted,
             succeeded=succeeded,
             failed=failed,
             skipped=skipped,
-            daily_remaining=max(0, daily_remaining - succeeded),
+            daily_remaining=max(0, limits.daily_limit - used_after),
             rows=rows,
         )
 
-    async def _submit_one(self, row: dict[str, Any], bucket: str) -> dict[str, Any]:
+    async def _submit_one(self, row: dict[str, Any], daily_limit: int) -> dict[str, Any]:
         assert self.wq is not None
         alpha_id = int(row["alpha_id"])
         wq_alpha_id = str(row["wq_alpha_id"])
+        bucket = date_bucket(timezone=self.settings.SUBMIT_TIMEZONE)
+        reserved = await self.db.reserve_submission_attempt(
+            alpha_id=alpha_id,
+            wq_alpha_id=wq_alpha_id,
+            date_bucket=bucket,
+            daily_limit=daily_limit,
+        )
+        if not reserved:
+            return {
+                "alpha_id": alpha_id,
+                "wq_alpha_id": wq_alpha_id,
+                "result": "skipped",
+                "error": "daily submission limit reached",
+            }
         try:
             submit_result = await self.wq.submit_alpha(wq_alpha_id)
             if submit_result.get("status") == "error":
@@ -231,11 +250,10 @@ class SubmissionManager:
                     submitted_at=submitted_at,
                     increment_attempts=True,
                 )
-                await self.db.insert_submission_log(
+                await self.db.finalize_submission_attempt(
                     alpha_id=alpha_id,
                     wq_alpha_id=wq_alpha_id,
                     date_bucket=bucket,
-                    action="submit",
                     result="success",
                     remote_status=remote_status,
                 )
@@ -246,6 +264,10 @@ class SubmissionManager:
                     "remote_status": remote_status,
                 }
             if status == "self_correlation_fail":
+                await self.db.append_backtest_check(
+                    alpha_id,
+                    {"name": "SELF_CORRELATION", "result": "FAIL"},
+                )
                 return await self._record_failure(
                     alpha_id,
                     wq_alpha_id,
@@ -282,11 +304,10 @@ class SubmissionManager:
             last_error=error[:500],
             increment_attempts=True,
         )
-        await self.db.insert_submission_log(
+        await self.db.finalize_submission_attempt(
             alpha_id=alpha_id,
             wq_alpha_id=wq_alpha_id,
             date_bucket=bucket,
-            action="submit",
             result="failure",
             remote_status=remote_status,
             error=error[:500],

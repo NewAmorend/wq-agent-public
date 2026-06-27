@@ -700,18 +700,134 @@ class Database:
         await self._conn.commit()
         return cursor.lastrowid
 
-    async def count_submission_successes(self, date_bucket: str) -> int:
+    async def finalize_submission_attempt(
+        self,
+        *,
+        alpha_id: int,
+        wq_alpha_id: str,
+        date_bucket: str,
+        result: str,
+        remote_status: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Finalize the latest reserved submit attempt for this alpha."""
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            """SELECT id
+               FROM submission_log
+               WHERE alpha_id = ?
+                 AND wq_alpha_id = ?
+                 AND date_bucket = ?
+                 AND action = 'submit'
+                 AND result = 'reserved'
+               ORDER BY id DESC
+               LIMIT 1""",
+            (alpha_id, wq_alpha_id, date_bucket),
+        )
+        row = await cursor.fetchone()
+        if row:
+            await self._conn.execute(
+                """UPDATE submission_log
+                   SET result = ?, remote_status = ?, error = ?
+                   WHERE id = ?""",
+                (result, remote_status, error, row["id"]),
+            )
+        else:
+            await self._conn.execute(
+                """INSERT INTO submission_log
+                   (alpha_id, wq_alpha_id, date_bucket, action, result,
+                    remote_status, error, created_at)
+                   VALUES (?, ?, ?, 'submit', ?, ?, ?, ?)""",
+                (
+                    alpha_id,
+                    wq_alpha_id,
+                    date_bucket,
+                    result,
+                    remote_status,
+                    error,
+                    datetime.now().isoformat(),
+                ),
+            )
+        await self._conn.commit()
+
+    async def count_submission_attempts(self, date_bucket: str) -> int:
         assert self._conn is not None
         cursor = await self._conn.execute(
             """SELECT COUNT(*) AS cnt
                FROM submission_log
                WHERE date_bucket = ?
-                 AND action = 'submit'
-                 AND result = 'success'""",
+                 AND action = 'submit'""",
             (date_bucket,),
         )
         row = await cursor.fetchone()
         return int(row["cnt"])
+
+    async def reserve_submission_attempt(
+        self,
+        *,
+        alpha_id: int,
+        wq_alpha_id: str,
+        date_bucket: str,
+        daily_limit: int,
+    ) -> bool:
+        """Atomically reserve one daily submission attempt before hitting WQ."""
+        assert self._conn is not None
+        await self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await self._conn.execute(
+                """SELECT COUNT(*) AS cnt
+                   FROM submission_log
+                   WHERE date_bucket = ?
+                     AND action = 'submit'""",
+                (date_bucket,),
+            )
+            used = int((await cursor.fetchone())["cnt"])
+            if used >= daily_limit:
+                await self._conn.rollback()
+                return False
+            await self._conn.execute(
+                """INSERT INTO submission_log
+                   (alpha_id, wq_alpha_id, date_bucket, action, result,
+                    remote_status, error, created_at)
+                   VALUES (?, ?, ?, 'submit', 'reserved', NULL, NULL, ?)""",
+                (alpha_id, wq_alpha_id, date_bucket, datetime.now().isoformat()),
+            )
+            await self._conn.commit()
+            return True
+        except Exception:
+            await self._conn.rollback()
+            raise
+
+    async def append_backtest_check(self, alpha_id: int, check: dict[str, Any]) -> None:
+        """Append or replace a check on the latest backtest result for an alpha."""
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            """SELECT id, checks
+               FROM backtest_results
+               WHERE alpha_id = ?
+               ORDER BY created_at DESC
+               LIMIT 1""",
+            (alpha_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return
+        checks: list[dict[str, Any]] = []
+        if row["checks"]:
+            try:
+                parsed = json.loads(row["checks"])
+                if isinstance(parsed, list):
+                    checks = [c for c in parsed if isinstance(c, dict)]
+            except (json.JSONDecodeError, TypeError):
+                checks = []
+        name = str(check.get("name", "")).upper()
+        checks = [c for c in checks if str(c.get("name", "")).upper() != name]
+        checks.append(check)
+        await self._conn.execute(
+            "UPDATE backtest_results SET checks = ? WHERE id = ?",
+            (json.dumps(checks, ensure_ascii=False), row["id"]),
+        )
+        await self._conn.commit()
 
     async def list_submittable_alphas(
         self, min_fitness: float = 1.0, limit: int = 50,
@@ -736,6 +852,7 @@ class Database:
                WHERE a.status != ?
                  AND b.grade = 'high'
                  AND b.fitness >= ?
+                 AND b.wq_alpha_id IS NOT NULL
                ORDER BY b.fitness DESC, b.created_at DESC""",
             (AlphaStatus.SUBMITTED.value, min_fitness),
         )

@@ -322,6 +322,8 @@ class WQClient:
             remote_status = str(alpha.get("status") or "")
             if remote_status == "ACTIVE":
                 return {"status": "active", "remote_status": remote_status, "alpha": alpha}
+            if alpha.get("dateSubmitted") or remote_status == "SUBMITTED":
+                return {"status": "submitted", "remote_status": remote_status, "alpha": alpha}
 
             checks = alpha.get("is", {}).get("checks", [])
             if _has_self_correlation_fail(checks):
@@ -330,8 +332,6 @@ class WQClient:
                     "remote_status": remote_status,
                     "alpha": alpha,
                 }
-            if _has_self_correlation_pass(checks) and remote_status in {"SUBMITTED", "UNSUBMITTED"}:
-                return {"status": "submitted", "remote_status": remote_status, "alpha": alpha}
             await asyncio.sleep(poll_interval)
 
         return {
