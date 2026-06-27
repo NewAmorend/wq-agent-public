@@ -304,7 +304,6 @@ class SubmissionManager:
         return sorted(
             rows,
             key=lambda row: _sort_tuple(row, sort_spec),
-            reverse=sort_spec.descending,
         )
 
     def export_candidates(self, candidates: list[dict[str, Any]], *, csv_dir: Path | str) -> Path:
@@ -354,7 +353,9 @@ async def run_daily_daemon(
 def _sort_tuple(row: dict[str, Any], sort_spec: SortSpec) -> tuple[int, Any]:
     value = _sortable_value(row, sort_spec.field)
     if value is None:
-        return (1 if sort_spec.descending else -1, None)
+        return (1, 0)
+    if sort_spec.descending and isinstance(value, (int, float)):
+        return (0, -value)
     return (0, value)
 
 
@@ -362,7 +363,7 @@ def _sortable_value(row: dict[str, Any], field: str) -> Any:
     value = row.get(field)
     if field == "created_at" and isinstance(value, str):
         try:
-            return datetime.fromisoformat(value)
+            return datetime.fromisoformat(value).timestamp()
         except ValueError:
             return None
     return value
