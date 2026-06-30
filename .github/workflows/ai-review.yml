@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: write
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     steps:
       - name: Check out base repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           persist-credentials: false
@@ -26,5 +26,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
           ZHIPU_MODEL: ${{ vars.ZHIPU_MODEL || 'glm-4-flash' }}
-          ZHIPU_BASE_URL: ${{ vars.ZHIPU_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
+          ZHIPU_BASE_URL: ${{ vars.ZHIPU_BASE_URL || 'https://open.bigmodel.cn/api/coding/paas/v4' }}
         run: python scripts/zhipu_pr_review.py
