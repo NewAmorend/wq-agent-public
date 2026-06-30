@@ -78,7 +78,7 @@ Repository setup:
   the workflow exits successfully without posting a comment.
 - Variable `ZHIPU_MODEL`: optional, defaults to `glm-4-flash`.
 - Variable `ZHIPU_BASE_URL`: optional, defaults to
-  `https://open.bigmodel.cn/api/paas/v4/chat/completions`.
+  `https://open.bigmodel.cn/api/coding/paas/v4`. The script appends `/chat/completions` when needed.
 
 Security note: PR diffs are sent to the configured Zhipu API endpoint. Do not
 use this workflow for repositories where pull request diffs may contain secrets,

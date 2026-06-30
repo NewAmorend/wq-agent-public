@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 MARKER = "<!-- wq-agent:zhipu-ai-review -->"
-DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
 DEFAULT_MODEL = "glm-4-flash"
 MAX_DIFF_CHARS = 50_000
 MAX_COMMENT_CHARS = 60_000
@@ -53,6 +53,13 @@ def github_request(
         raise ReviewError(f"GitHub API {method} {url} failed: {exc.code} {detail}") from exc
 
 
+def zhipu_endpoint() -> str:
+    base_url = env("ZHIPU_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        return base_url
+    return f"{base_url}/chat/completions"
+
+
 def zhipu_chat(prompt: str) -> str:
     api_key = env("ZHIPU_API_KEY")
     payload = {
@@ -73,7 +80,7 @@ def zhipu_chat(prompt: str) -> str:
         ],
     }
     req = urllib.request.Request(
-        env("ZHIPU_BASE_URL", DEFAULT_BASE_URL),
+        zhipu_endpoint(),
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
     )
